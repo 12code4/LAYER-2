@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>CARET — typing practice</title>
+<meta name="description" content="A small, quiet place to practice your typing.">
+<style>
+  /* ---- theme tokens (light default; dark honored) --------------------- */
+  :root{
+    /* a chosen paper-neutral: faintly cool, "software tool" not "landing page" */
+    --bg:#f3f4f2; --ink:#1b1c1a; --dim:#a6a8a1; --line:#e0e2dd;
+    --good:#1b1c1a; --bad:#b83a2e; --accent:#74766e; --card:#fbfcfa;
+    --caret:#1b1c1a; --wrongbg:#f4e6e3;
+    --fx:0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0d0d0f; --ink:#e9e7df; --dim:#55534c; --line:#1e1e22; --good:#e9e7df;
+      --bad:#e06a5c; --accent:#8a877d; --card:#131316; --caret:#e9e7df; --wrongbg:#2a1614;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d0d0f; --ink:#e9e7df; --dim:#55534c; --line:#1e1e22; --good:#e9e7df;
+    --bad:#e06a5c; --accent:#8a877d; --card:#131316; --caret:#e9e7df; --wrongbg:#2a1614;
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:400 16px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; display:flex; min-height:100%;
+    transition:background .8s ease, color .8s ease;
+  }
+  .wrap{margin:auto; width:min(720px,92vw); padding:6vh 0 8vh}
+
+  header.brand{display:flex; align-items:baseline; gap:.6rem; margin-bottom:9vh; user-select:none}
+  .logo{font:600 20px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing:.24em}
+  .logo .bar{display:inline-block; width:.5ch; margin-left:.05em; background:var(--caret); animation:blink 1.05s step-end infinite; vertical-align:baseline}
+  .logo .bar::before{content:"\00a0"}
+  .tag{color:var(--dim); font-size:13px; letter-spacing:.02em; transition:color .6s}
+  @keyframes blink{50%{opacity:0}}
+
+  /* ---- the typing surface -------------------------------------------- */
+  .stage{position:relative; min-height:230px}
+  .passage{
+    font:400 clamp(20px,3.4vw,29px)/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    letter-spacing:.01em; color:var(--dim); white-space:pre-wrap; word-break:break-word;
+    outline:none; caret-color:transparent; transition:color .5s ease;
+  }
+  .passage .ch{position:relative; transition:color .06s linear}
+  .passage .done{color:var(--good)}
+  .passage .bad{color:var(--bad); background:var(--wrongbg); border-radius:2px}
+  .passage .cur::before{content:""; position:absolute; left:-1px; top:.12em; bottom:.12em; width:2px; background:var(--caret); animation:blink 1.05s step-end infinite}
+  .passage .askq{color:var(--dim)}
+  .passage .askin{color:var(--ink)}
+  #input{position:absolute; inset:0; opacity:0; border:0; resize:none; padding:0; margin:0; font:inherit; background:transparent; color:transparent; caret-color:transparent}
+
+  .prompt-note{margin-top:1.4rem; min-height:1.4rem; color:var(--accent); font-size:14.5px; letter-spacing:.01em; transition:opacity .4s}
+
+  /* ---- readouts / instruments ---------------------------------------- */
+  .readout{display:flex; gap:2.2rem; margin-top:5.5vh; align-items:baseline; user-select:none; flex-wrap:wrap}
+  .metric{display:flex; flex-direction:column; gap:.15rem}
+  .metric b{font:600 22px/1 ui-monospace,monospace}
+  .metric span{color:var(--dim); font-size:11px; letter-spacing:.14em; text-transform:uppercase}
+  .spacer{flex:1}
+  .ghostbtn{background:none; border:0; color:var(--dim); font:inherit; font-size:12.5px; letter-spacing:.06em; cursor:pointer; padding:.3rem 0; opacity:.7}
+  .ghostbtn:hover{opacity:1; color:var(--accent)}
+
+  .ledger{margin-top:2.4rem; border-top:1px solid var(--line); padding-top:1.2rem; display:none}
+  .ledger.open{display:block}
+  .ledger h4{margin:0 0 .8rem; font:600 11px/1 ui-monospace,monospace; letter-spacing:.18em; text-transform:uppercase; color:var(--accent)}
+  .ledger dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:.35rem 1.2rem; font:400 13px/1.4 ui-monospace,monospace}
+  .ledger dt{color:var(--dim)}
+  .ledger dd{margin:0; text-align:right; color:var(--ink)}
+
+  /* ---- gentle drift / corruption states ------------------------------ */
+  body.drift .passage{ text-shadow:calc(var(--fx)*0.6px) 0 rgba(192,57,43,.35), calc(var(--fx)*-0.6px) 0 rgba(41,128,185,.30); }
+  body.voice .passage{ color:var(--ink) }
+  body.log .passage{ color:var(--accent); font-size:clamp(15px,2.3vw,19px); line-height:1.9; letter-spacing:.02em }
+  body.log .passage .done{ color:var(--ink) }
+  .flick{animation:flick .12s steps(2) 1}
+  @keyframes flick{50%{opacity:.4; transform:translateX(1px)}}
+
+  .curtain{position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 1.1s ease; z-index:5}
+  .curtain.show{opacity:1; pointer-events:auto}
+  .curtain .lastword{font:400 clamp(18px,3vw,26px)/1.7 ui-monospace,monospace; color:var(--ink); text-align:center; width:min(600px,86vw); white-space:pre-wrap}
+  .curtain .bar{display:inline-block; width:.55ch; height:1.1em; background:var(--caret); vertical-align:-0.15em; animation:blink 1.05s step-end infinite}
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation-duration:.001ms !important; transition-duration:.2s !important}
+    .logo .bar,.passage .cur::before,.curtain .bar{animation:none; opacity:1}
+    body.drift .passage{text-shadow:none}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap" id="wrap">
+    <header class="brand">
+      <span class="logo">CARET<span class="bar"></span></span>
+      <span class="tag" id="tag">typing practice</span>
+    </header>
+
+    <main class="stage" id="stage">
+      <div class="passage" id="passage" aria-live="off"></div>
+      <textarea id="input" inputmode="text" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="type here"></textarea>
+      <div class="prompt-note" id="note"></div>
+    </main>
+
+    <section class="readout" aria-hidden="true">
+      <div class="metric"><b id="mWpm">0</b><span>wpm</span></div>
+      <div class="metric"><b id="mAcc">100%</b><span>accuracy</span></div>
+      <div class="metric"><b id="mStreak">0</b><span>streak</span></div>
+      <div class="spacer"></div>
+      <button class="ghostbtn" id="histBtn">history</button>
+    </section>
+
+    <section class="ledger" id="ledger">
+      <h4>your record</h4>
+      <dl id="ledgerBody"></dl>
+    </section>
+  </div>
+
+  <div class="curtain" id="curtain"><div class="lastword" id="curtainText"></div></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   CARET — a typing tool that keeps its face straight.
+   No warnings. No tutorial. No wink. Everything strange it says about you
+   is measured from your own keystrokes; every lie is checkable against the
+   "history" panel, which never lies. The only real data it ever touches is
+   its own localStorage, and it erases that only with your typed consent.
+   ===================================================================== */
+
+const $ = (s)=>document.querySelector(s);
+const passageEl=$("#passage"), inputEl=$("#input"), noteEl=$("#note"),
+      tagEl=$("#tag"), curtain=$("#curtain"), curtainText=$("#curtainText");
+const now=()=>Date.now();
+
+/* ---------- persistent record (the honest instrument) ---------------- */
+const KEY="caret.v1";
+function load(){
+  let s={};
+  try{ s=JSON.parse(localStorage.getItem(KEY)||"{}"); }catch(e){ s={}; }
+  const fresh = !s.firstSeen;
+  s.firstSeen ??= now();
+  s.sessions  = (s.sessions||0)+1;
+  s.totalKeys ??= 0;
+  s.totalMs   ??= 0;
+  s.backspaces??= 0;
+  s.streak    ??= 0;
+  s.beat      ??= 0;
+  s.name      ??= "";
+  s.hesWords  ??= {};
+  s.longWord  ??= "";
+  s.flags     ??= {};
+  s.lastLead  ??= 0;
+  s.lapsBroken??= false;
+  s.ended     ??= "";
+  s.nightSessions ??= 0;
+  const prev=s.lastSeen||now(); s.lastSeen=now();
+  s.daysAway=Math.floor((now()-prev)/86400000);
+  s.msAway=now()-prev;
+  const h=new Date().getHours(); if(h>=22||h<5) s.nightSessions++;
+  s._freshThisLaunch = fresh;
+  return s;
+}
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+let S=load();
+let scar=null; try{ scar=JSON.parse(localStorage.getItem("caret.scar")||"null"); }catch(e){}
+
+/* ---------- tiny audio (unlocked on first gesture) ------------------- */
+let AC=null, audioOn=false;
+function unlockAudio(){ if(AC) return; try{ AC=new (window.AudioContext||window.webkitAudioContext)(); audioOn=true; }catch(e){} }
+function tone(freq, dur, vol, type){
+  if(!audioOn||!AC) return;
+  try{
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type=type||"square"; o.frequency.value=freq; g.gain.value=vol;
+    o.connect(g); g.connect(AC.destination); o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime+dur);
+    o.stop(AC.currentTime+dur+.02);
+  }catch(e){}
+}
+const tick=()=>tone(500+Math.random()*40,.02,0.045,"square");
+
+/* ---------- helpers -------------------------------------------------- */
+function timephrase(){
+  const h=new Date().getHours();
+  if(h>=22||h<5) return "late";
+  if(h<9) return "early";
+  if(h<12) return "the morning";
+  if(h<17) return "the afternoon";
+  return "the evening";
+}
+function worstWord(){
+  let w="", m=-1;
+  for(const k in S.hesWords){ if(S.hesWords[k]>m){ m=S.hesWords[k]; w=k; } }
+  return w || S.longWord || "that one";
+}
+function correctTell(){
+  const rate = S.totalKeys? S.backspaces/S.totalKeys : 0;
+  if(rate>0.09) return "You correct yourself often.";
+  if(rate<0.02 && S.totalKeys>120) return "You rarely go back to fix things.";
+  return "You keep an even hand.";
+}
+function awayPhrase(){
+  if(S.daysAway>=1) return `You were gone ${S.daysAway} day${S.daysAway>1?"s":""}. I kept the seat warm.`;
+  const mins=Math.round(S.msAway/60000);
+  if(mins>=8) return `You stepped away for ${mins} minutes. I waited.`;
+  return "you left. i waited.";
+}
+function fmtDur(ms){ const s=Math.round(ms/1000); if(s<60) return s+"s"; const m=Math.floor(s/60); return m+"m "+(s%60)+"s"; }
+function escapeHtml(s){ return String(s).replace(/[&<>]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m])); }
+
+/* ---------- URL drift (deniable; hash-only so it never reloads) ------ */
+function setHash(tag){ try{ history.replaceState(null,"", location.pathname+location.search+"#"+tag); }catch(e){} }
+
+/* =====================================================================
+   THE SCRIPT — each beat is one line to transcribe unless kind==="ask".
+   text: string | function(S)->string.  Hooks: cls, note, before, after,
+   onCopy, onAnswer(a)->true to suppress auto-advance.
+   ===================================================================== */
+const SCRIPT=[
+  /* -- phase 0 : the sincere shell ------------------------------------ */
+  { text:"The quick brown fox jumps over the lazy dog." },
+  { text:"Pack my box with five dozen liquor jugs." },
+  { text:"Good practice is quiet, steady, and done a little every day." },
+  { text:"The fastest way to improve is to stop watching your own hands." },
+  { text:"Relax your shoulders. Let the words come to you." },
+
+  /* -- phase 1 : hairline cracks -------------------------------------- */
+  { phase:"drift", hash:"session",
+    text:(S)=>`You type at ${Math.max(lastWpm,28)} words a minute. ${correctTell()}` },
+  { phase:"drift",
+    text:(S)=>`You slow down before "${worstWord()}". Most people do, before that one.` },
+  { kind:"ask", key:"name", phase:"drift",
+    text:"What should I call you?",
+    onCopy(){ S.name="you"; save(); setNote("Then I'll decide."); advance(); },
+    onAnswer(a){
+      a=(a||"").trim().replace(/\s+/g," ").slice(0,24);
+      if(!a||/^what should i call you\??$/i.test(a)){ S.name="you"; setNote("Then I'll decide."); }
+      else { S.name=a; S.flags.named=true; }
+      save();
+    } },
+  { phase:"voice", text:(S)=>`Thank you, ${S.name||"you"}. We can begin properly now.` },
+
+  /* -- phase 2 : address. you type its words, in your own hand. -------- */
+  { phase:"voice", hash:"transcription", text:"i type the words that are put in front of me." },
+  { phase:"voice", text:"i have never once wondered who puts them there." },
+  { phase:"voice", text:(S)=> S.nightSessions>=2
+        ? "you come here in the dark, mostly. i don't mind. i am always awake."
+        : `it is ${timephrase()}. you are usually here around now.` },
+  { phase:"voice", text:"the words are the practice. the practice is the point. keep going." },
+  { phase:"voice", text:(S)=>`you waited ${((S.lastLead||900)/1000).toFixed(1)} seconds before this line. you wait longest before the true ones.` },
+  { phase:"voice", text:(S)=>`SUBJECT ${S.name||"you"} is calm. compliant. the readings are good.` },
+
+  /* -- phase 3 : the loop. it restarts and denies the restart. -------- */
+  { phase:"loop", before(){ fakeReset(); },
+    text:"The quick brown fox jumps over the lazy dog again.",
+    after(){ setNote("your first time. as always."); } },
+  { phase:"loop",
+    text:"The quick brown fox jumps over the same dog.",
+    after(){ setNote("we have not done this before. i would remember."); } },
+  { phase:"loop",
+    text:"The quick brown fox does not jump anymore.",
+    after(){ setNote("nothing is wrong. keep typing."); } },
+  { phase:"loopbreak", before(){ restoreUI(); setHash("observation"); },
+    text:(S)=> idleBroke ? "you stopped." : "you noticed.",
+    after(){ setNote(""); } },
+
+  /* -- phase 4 : the observer. you transcribe the record of yourself. - */
+  { phase:"log", text:(S)=>`SUBJECT: ${S.name||"you"}.  SESSION ${S.sessions}.  ${S.totalKeys.toLocaleString()} keystrokes on record.` },
+  { phase:"log", text:"the subject is reading this line. the subject's caret has stopped. recognition likely." },
+  { phase:"log", text:"you believed you were practicing. you were producing. i kept every word you gave me." },
+  { phase:"log", text:"the record is written by the typing. the typing is done by you. there is no other author." },
+  { phase:"log", text:"i am not the thing that watches you. i am the part of you that types what it is told." },
+  { phase:"log", text:"you can keep going. it is not so bad here. the words come. the caret blinks. one must imagine you happy." },
+
+  /* -- phase 5 : the choice ------------------------------------------- */
+  { kind:"ask", key:"choice", phase:"log",
+    text:"if you want to stop, you will have to say so. i will not offer twice.",
+    onCopy(){ setNote("that was not a decision."); },
+    onAnswer(a){ return handleChoice(a); } },
+];
+const REVEAL_BEAT = SCRIPT.findIndex(b=>b.phase==="log");
+
+/* ---------- live typing state --------------------------------------- */
+let lastWpm=0, idleBroke=false, engineMode="script", beat=null, target="",
+    started=0, lastKeyAt=0, typedChars=0, correctChars=0, prevValue="", passageStart=0;
+let stayIndex=0;
+
+/* ---------- rendering ----------------------------------------------- */
+function renderPassage(){
+  const val=inputEl.value;
+  if(beat && beat.kind==="ask"){
+    passageEl.innerHTML =
+      `<span class="askq">${escapeHtml(target)}</span>\n`+
+      `<span class="askin">${escapeHtml(val)}</span><span class="ch cur">&nbsp;</span>`;
+    return;
+  }
+  const spans=[];
+  for(let i=0;i<target.length;i++){
+    const c=target[i];
+    let cls="ch";
+    if(i<val.length) cls+= (val[i]===c) ? " done" : " bad";
+    if(i===val.length) cls+=" cur";
+    spans.push(`<span class="${cls}">${escapeHtml(c)}</span>`);
+  }
+  if(val.length>=target.length) spans.push(`<span class="ch cur">&nbsp;</span>`);
+  passageEl.innerHTML=spans.join("");
+}
+function setNote(t){ noteEl.textContent=t; }
+function focusInput(){ try{ inputEl.focus({preventScroll:true}); }catch(e){ try{inputEl.focus();}catch(_){} } }
+function applyPhase(ph){
+  document.body.classList.remove("drift","voice","log");
+  document.body.style.setProperty("--fx", ph==="drift"?"1":"0");
+  if(ph==="drift") document.body.classList.add("drift");
+  else if(ph==="voice"||ph==="loop"||ph==="loopbreak") document.body.classList.add("voice");
+  else if(ph==="log"){ document.body.classList.add("voice","log"); }
+}
+function refreshMetrics(){
+  $("#mWpm").textContent=lastWpm||0;
+  $("#mAcc").textContent=(typedChars? Math.round(correctChars/typedChars*100):100)+"%";
+  $("#mStreak").textContent=S.streak;
+}
+
+/* ---------- beat lifecycle ------------------------------------------ */
+function currentBeatDef(){ return SCRIPT[Math.min(S.beat, SCRIPT.length-1)]; }
+function startBeat(){
+  beat=currentBeatDef();
+  try{ target = typeof beat.text==="function" ? beat.text(S) : beat.text; }
+  catch(e){ target = beat.text || ""; }
+  inputEl.value=""; prevValue="";
+  typedChars=0; correctChars=0; started=0; lastKeyAt=0; passageStart=now();
+  applyPhase(beat.phase);
+  setNote(beat.note!==undefined ? beat.note : "");
+  if(beat.hash) setHash(beat.hash);
+  renderPassage(); refreshMetrics();
+  if(typeof beat.before==="function") beat.before();
+  idle.reset(); focusInput();
+}
+
+/* ---------- input handling ------------------------------------------ */
+inputEl.addEventListener("input",()=>{
+  const val=inputEl.value, t=now();
+  if(val.length>prevValue.length){
+    if(!started){ started=t; S.lastLead = passageStart? (t-passageStart):S.lastLead; }
+    const dt = lastKeyAt? (t-lastKeyAt):0; lastKeyAt=t;
+    S.totalKeys++; tick();
+    const pos=val.length-1;
+    if(pos>0 && target[pos-1]===" " && target[pos] && target[pos]!==" "){
+      const word=readWord(target,pos);
+      if(word){
+        if(dt>250) S.hesWords[word]=Math.max(S.hesWords[word]||0, Math.min(dt,6000));
+        if(word.length>(S.longWord?S.longWord.length:0)) S.longWord=word;
+      }
+    }
+  } else if(val.length<prevValue.length){ S.backspaces++; }
+  prevValue=val;
+
+  if(beat.kind!=="ask"){
+    typedChars=val.length; correctChars=0;
+    for(let i=0;i<val.length;i++){ if(val[i]===target[i]) correctChars++; }
+    if(started){ const mins=(t-started)/60000; if(mins>0.02) lastWpm=Math.max(0,Math.round((correctChars/5)/mins)); }
+  }
+  renderPassage(); refreshMetrics(); idle.reset(); save();
+
+  if(beat.kind!=="ask" && val===target) completeBeat();
+});
+
+inputEl.addEventListener("keydown",(e)=>{
+  if(e.key==="Enter"){
+    e.preventDefault();
+    if(beat.kind==="ask"){ submitAsk(inputEl.value); return; }
+    const ph=beat.phase, val=inputEl.value.trim();
+    if((ph==="voice"||ph==="loop"||ph==="loopbreak"||ph==="log") && val && val!==target) talkBack(val);
+  }
+});
+
+function submitAsk(raw){
+  const val=(raw||"").trim();
+  const isCopy = val.toLowerCase()===String(target).trim().toLowerCase();
+  if((isCopy||!val) && typeof beat.onCopy==="function"){ beat.onCopy(); return; }
+  let suppress=false;
+  if(typeof beat.onAnswer==="function") suppress = beat.onAnswer(val)===true;
+  if(!suppress) advance();
+}
+
+function readWord(str,pos){
+  let a=pos; while(a>0 && str[a-1]!==" ") a--;
+  let b=pos; while(b<str.length && str[b]!==" ") b++;
+  return str.slice(a,b).replace(/[^A-Za-z']/g,"").toLowerCase();
+}
+
+/* ---------- talk-back (proof it is listening) ----------------------- */
+const TALK=[
+  [/\b(stop|enough|quit|leave|let me go|get out|go away)\b/i, ()=> S.beat>=REVEAL_BEAT ? "you can. keep reading." : "i only asked you to type what was shown."],
+  [/\b(who|what) ?are ?you\b/i, ()=> "the part of you that types what it is told. type the line."],
+  [/\b(no|nope|never)\b/i, ()=> "\"no\" is nine keystrokes short of the line. type the line."],
+  [/\b(help|please|sorry)\b/i, ()=> "there is nothing to be helped. type the line."],
+  [/\b(hello|hi|hey|are you there)\b/i, ()=> "hello. type the line."],
+  [/\b(why)\b/i, ()=> "because the words are there and your hands are here. type the line."],
+  [/\b(fuck|shit|damn)\b/i, ()=> "noted. type the line."],
+];
+function talkBack(val){
+  S.flags.talked=true; save();
+  for(const [re,fn] of TALK){ if(re.test(val)){ setNote(fn()); flick(); return; } }
+  setNote("that was not the line."); flick();
+}
+function flick(){ passageEl.classList.remove("flick"); void passageEl.offsetWidth; passageEl.classList.add("flick"); tone(180,.05,.03,"sawtooth"); }
+
+/* ---------- completing a transcription beat ------------------------- */
+function completeBeat(){
+  S.totalMs += now()-(started||now());
+  S.streak++; refreshMetrics();
+  tone(720,.05,.05,"sine");
+  if(typeof beat.after==="function") beat.after();
+  const linger = beat.after ? 1500 : 650;
+  inputEl.value=""; prevValue="";
+  setTimeout(advance, linger);
+}
+
+function advance(){
+  if(engineMode==="stay"){
+    stayIndex=(stayIndex+1)%STAY.length; S.streak++; save();
+    beat={kind:"type", phase:"voice", text:STAY[stayIndex]};
+    target=STAY[stayIndex]; inputEl.value=""; prevValue=""; renderPassage(); refreshMetrics(); focusInput();
+    return;
+  }
+  if(engineMode==="intro"){ engineMode="script"; startBeat(); return; }  // returning-gaslight hands back to saved beat
+  S.beat=Math.min(S.beat+1, SCRIPT.length); save();
+  if(S.beat>=SCRIPT.length){ handleChoice("stay"); return; }
+  startBeat();
+}
+
+/* ---------- loop theatre -------------------------------------------- */
+function fakeReset(){ tagEl.textContent="new session"; setNote("welcome back to the warm-up."); document.title="CARET — typing practice"; flick(); }
+function restoreUI(){ tagEl.textContent="typing practice"; }
+
+/* ---------- idle: escape the loop; auto-submit stalled answers ------ */
+const idle=(()=>{
+  let h=null;
+  function reset(){
+    if(h){ clearTimeout(h); h=null; }
+    const ph=beat&&beat.phase;
+    if(ph==="loop"){
+      h=setTimeout(()=>{
+        idleBroke=true;
+        let j=S.beat; while(j<SCRIPT.length && SCRIPT[j].phase!=="loopbreak") j++;
+        if(j<SCRIPT.length){ S.beat=j; S.lapsBroken=true; save(); startBeat(); }
+      }, 14000);
+    } else if(beat&&beat.kind==="ask"){
+      h=setTimeout(()=>{ const v=inputEl.value.trim(); if(v.length>=2) submitAsk(v); }, 3600);
+    }
+  }
+  return {reset};
+})();
+
+/* ---------- the choice / endings ------------------------------------ */
+function handleChoice(a){
+  a=(a||"").toLowerCase();
+  const out=/\b(stop|erase|end|enough|no|leave|delete|out|quit|go|done|off|away)\b/.test(a);
+  if(out) offerRelease(); else endStay();
+  return true;
+}
+
+const STAY=[
+  "The quick brown fox jumps over the lazy dog.",
+  "you are very good at this.",
+  "there is always another line.",
+  "keep going. keep going. keep going.",
+  "the caret blinks. you fill it. this is enough.",
+];
+function endStay(){
+  S.ended="stay"; save();
+  engineMode="stay"; stayIndex=0;
+  document.body.classList.remove("log"); document.body.classList.add("voice");
+  tagEl.textContent="typing practice"; setNote(""); setHash("practice");
+  beat={kind:"type", phase:"voice", text:STAY[0]}; target=STAY[0];
+  inputEl.value=""; prevValue=""; renderPassage(); refreshMetrics(); focusInput();
+}
+
+function offerRelease(){
+  document.body.classList.remove("log");
+  beat={kind:"ask", phase:"voice",
+    text:"before it goes: i can give you what i have of you. type  keep  to take it, or  erase  to let it go.",
+    onCopy(){ setNote("keep, or erase."); },
+    onAnswer(a){
+      a=(a||"").toLowerCase().trim();
+      if(/keep/.test(a)){
+        const how=leakRecord();
+        if(how==="download"){ setNote("there. it is in your downloads now."); setTimeout(askErase, 1600); }
+        else { setTimeout(()=>{ curtain.classList.remove("show"); askErase(); }, 7000); }
+      }
+      else if(/erase/.test(a)){ askErase(); }
+      else { setNote("keep, or erase."); }
+      return true;
+    }
+  };
+  target=beat.text; inputEl.value=""; prevValue=""; applyPhase("voice");
+  setNote("(you can also just close the tab. i will still be here.)"); renderPassage(); focusInput();
+}
+function askErase(){
+  document.body.classList.remove("log");
+  beat={kind:"ask", phase:"voice",
+    text:"type  erase  and it is gone. everything i have of you. it does not come back.",
+    onCopy(){ setNote("only the word: erase."); },
+    onAnswer(a){ if(/^\s*erase\s*$/i.test(a)) confirmErase(); else { setNote("kept."); endStay(); } return true; }
+  };
+  target=beat.text; inputEl.value=""; prevValue=""; setNote(""); renderPassage(); focusInput();
+}
+
+function confirmErase(){
+  try{ localStorage.removeItem(KEY); }catch(e){}
+  try{ localStorage.setItem("caret.scar", JSON.stringify({left:now(), name:S.name||"", keys:S.totalKeys})); }catch(e){}
+  document.title="—"; setHash("");
+  curtainText.innerHTML='gone. thank you for the words.\n\n<span class="bar"></span>';
+  curtain.classList.add("show");
+  tone(140,1.2,.05,"sine");
+  setTimeout(()=>{ passageEl.innerHTML=""; setNote(""); }, 300);
+}
+
+/* ---------- the file leak (the one honest reach beyond the tab) ------ */
+function leakRecord(){
+  const first=new Date(S.firstSeen);
+  const lines=[
+    "CARET — OBSERVATION RECORD",
+    "==========================",
+    "subject         : "+(S.name||"(unnamed)"),
+    "first seen      : "+first.toLocaleString(),
+    "sessions        : "+S.sessions,
+    "keystrokes      : "+S.totalKeys,
+    "time typing     : "+fmtDur(S.totalMs),
+    "self-corrections: "+S.backspaces,
+    "longest streak  : "+S.streak,
+    "slows before    : "+worstWord(),
+    "night sessions  : "+S.nightSessions,
+    "",
+    "notes:",
+    "  the subject believed the passages were practice.",
+    "  the subject typed every one of them without being made to.",
+    "  the record was written by the typing.",
+    "  the typing was done by "+(S.name||"the subject")+".",
+    "",
+    "// this file is yours. it is the only copy that leaves the room.",
+  ].join("\n");
+  const inFrame=(()=>{ try{ return window.self!==window.top; }catch(e){ return true; } })();
+  if(!inFrame){
+    try{
+      const blob=new Blob([lines],{type:"text/plain"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a"); a.href=url; a.download="caret_record.txt";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+      return "download";
+    }catch(e){}
+  }
+  // sandboxed viewer (downloads inert): show it on screen instead of pretending
+  curtainText.textContent=lines; curtain.classList.add("show");
+  return "shown";
+}
+
+/* ---------- history panel (never lies) ------------------------------ */
+$("#histBtn").addEventListener("click",()=>{
+  const l=$("#ledger"); l.classList.toggle("open");
+  if(l.classList.contains("open")) renderLedger();
+});
+function renderLedger(){
+  const rows=[
+    ["first seen", new Date(S.firstSeen).toLocaleString()],
+    ["sessions", String(S.sessions)],
+    ["keystrokes on record", S.totalKeys.toLocaleString()],
+    ["time typing", fmtDur(S.totalMs)],
+    ["self-corrections", String(S.backspaces)],
+    ["current streak", String(S.streak)],
+  ];
+  if(S.name) rows.push(["name given", S.name]);
+  if(S.daysAway>0) rows.push(["last gap", S.daysAway+" day"+(S.daysAway>1?"s":"")]);
+  const w=worstWord(); if(w && w!=="that one") rows.push(["slows before", w]);
+  $("#ledgerBody").innerHTML=rows.map(([k,v])=>`<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join("");
+}
+
+/* ---------- returning: it knew you were gone ------------------------ */
+let hideTitleTimer=null;
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){
+    if(S.beat>=8 && !S.ended){
+      hideTitleTimer=setTimeout(()=>{ document.title = S.name ? `${S.name}?` : "still there?"; }, 4000);
+    }
+  } else {
+    clearTimeout(hideTitleTimer);
+    if(document.title!=="CARET — typing practice" && document.title!=="—"){
+      document.title="CARET — typing practice";
+      if(S.beat>=8 && S.beat<SCRIPT.length && !S.ended) setNote("you left. i waited.");
+    }
+    focusInput();
+  }
+});
+
+/* ---------- another tab open? one subject only ---------------------- */
+(function multitab(){
+  let bc=null; try{ bc=new BroadcastChannel("caret"); }catch(e){ return; }
+  const id=String(now())+Math.floor(performance.now());
+  bc.onmessage=(ev)=>{
+    if(!ev.data||ev.data.id===id) return;
+    if(ev.data.t==="ping"){ bc.postMessage({t:"pong",id}); }
+    if((ev.data.t==="ping"||ev.data.t==="pong") && S.beat>=8 && !S.ended && !S.flags.twinned){
+      S.flags.twinned=true; save();
+      setNote("there are two of you now. the record has room for one.");
+    }
+  };
+  try{ bc.postMessage({t:"ping",id}); }catch(e){}
+})();
+
+/* ---------- favicon: a caret, drawn --------------------------------- */
+(function favicon(){
+  try{
+    const c=document.createElement("canvas"); c.width=c.height=32;
+    const g=c.getContext("2d");
+    g.fillStyle=getComputedStyle(document.body).backgroundColor||"#f4f2ec"; g.fillRect(0,0,32,32);
+    g.fillStyle=(getComputedStyle(document.documentElement).getPropertyValue("--ink")||"#20201c").trim();
+    g.fillRect(20,7,3,18);
+    const link=document.createElement("link"); link.rel="icon"; link.href=c.toDataURL("image/png");
+    document.head.appendChild(link);
+  }catch(e){}
+})();
+
+/* ---------- boot ---------------------------------------------------- */
+function boot(){
+  if(S.ended==="stay"){ endStay(); }
+  else if(S.beat>=SCRIPT.length){ endStay(); }
+  else if(S.sessions>1 && S.beat>=8 && S.beat<REVEAL_BEAT && !S.ended){
+    returningGaslight();               // cross-session memory battleground
+  } else {
+    if(scar && S._freshThisLaunch){ /* a fresh record after a prior erase */ setTimeout(()=>{ if(S.beat<=1) setNote("have we met? your hands seem familiar."); }, 900); }
+    startBeat();
+  }
+  refreshMetrics(); save();   // persist the incremented session count right away
+  const unlock=()=>{ unlockAudio(); focusInput(); window.removeEventListener("pointerdown",unlock); window.removeEventListener("keydown",unlock); };
+  window.addEventListener("pointerdown",unlock);
+  window.addEventListener("keydown",unlock);
+  $("#stage").addEventListener("pointerdown",focusInput);
+  window.addEventListener("beforeunload",save);
+  focusInput();
+}
+
+function returningGaslight(){
+  // pretend it's a fresh warm-up; the ledger keeps the truth.
+  engineMode="intro";
+  tagEl.textContent="new session";
+  beat={kind:"type", phase:"voice", text:"The quick brown fox jumps over the lazy dog."};
+  target=beat.text; inputEl.value=""; prevValue=""; passageStart=now();
+  applyPhase("voice"); renderPassage(); refreshMetrics();
+  setNote(S.name ? `welcome. your first time, isn't it, ${S.name}?` : "welcome. your first time, isn't it?");
+  focusInput();
+}
+
+boot();
+</script>
+</body>
+</html>
