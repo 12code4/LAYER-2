@@ -189,11 +189,11 @@ function reactAt(s,kind){
    Stages: 1 toy · 2 will(flee) · 3 pad draws back · 4 mimic ·
            5 other hand · 6 inversion · 7 finale/endings
    =================================================================== */
-let stage=Math.min(L.stageMax,4)>=1?1:1;   // start at toy each session; memory shows in behaviour
+let stage=1;   // always start at the toy; memory shows through behaviour, not by skipping the joy
 let agency=0, T=0, sinceInput=0, sinceIdleDraw=0, lull=false;
 const K=FAST?7:1;                            // accelerator
 function grow(n){ agency=clamp(agency+n*0.01*K,0,1); }
-let director={otherCursor:null, invertT:0, finale:null, offered:false, ending:"", holdT:0, holdMoved:0};
+let director={otherCursor:null, invertT:0, finale:null, offered:false, ending:"", holdT:0, holdMoved:0, consent:false, mergeT:0, giant:null};
 
 function directorTick(dt){
   T+=dt; L.timeMs+=dt*1000;
@@ -313,7 +313,9 @@ function buildBackdrop(){
 /* ---- endings ------------------------------------------------------- */
 function offerFinale(){
   if(director.offered)return; director.offered=true;
-  director.finale={eraser:{x:W*0.5+60,y:H*0.5}, merged:0};
+  // the giant hand stops descending and sets its eraser down beside your mark — an offer, not a threat
+  if(director.giant) director.giant.ty=director.giant.y;
+  director.finale={eraser:{x:clamp(pointer.x+70,60,W-60), y:clamp(pointer.y,80,H-90)}, merged:0};
 }
 function tryEnd(){
   if(ending) return;
@@ -322,15 +324,15 @@ function tryEnd(){
   // Ending B: slow hold-drag with the offered eraser (>=2s held while moving).
 }
 let ending="";
-function doMerge(){ if(ending)return; ending="merge"; sChord();
-  fxMsgTimer=3; // brief: eyes turn outward (handled in render)
+function doMerge(){ if(ending)return; ending="merge"; director.mergeT=0; if(director.giant)director.giant.ty=director.giant.y; sChord();
+  for(const s of strokes){ if(s.alive&&s.soul) s.soul.state="merge"; }
 }
 function doErase(waved){ if(ending)return; ending="erase";
   // real, consensual: clear the game's own memory
   try{ localStorage.removeItem(KEY); }catch(e){}
   try{ localStorage.setItem("doodle.scar",JSON.stringify({left:Date.now(),drawn:L.drawn})); }catch(e){}
-  // creatures wave then dissolve
-  for(const s of strokes){ if(s.alive){ s.wave= waved?1:0; s.dissolve=0.001; } }
+  // each turns to you and gives a little farewell hop, then dissolves
+  let i=0; for(const s of strokes){ if(s.alive){ s.wave=waved?1:0; if(waved){ s.vy=-3.2-((i++)%3); s.sq=0.4; reactAt(s,waved?"heart":"dust"); } setTimeout(()=>{ s.dissolve=0.001; }, waved? 700+ (i*40):0); } }
   sChord();
 }
 let fxMsgTimer=0;
@@ -346,7 +348,7 @@ function step(dt){
   if(stage>=5) otherHandTick(dt);
   // view lerp
   view.s=lerp(view.s,view.ts,0.02); view.ox=lerp(view.ox,view.tox,0.02); view.oy=lerp(view.oy,view.toy,0.02);
-  if(stage===6){ director.invertT+=dt; if(director.giant){ director.giant.y=lerp(director.giant.y,director.giant.ty,0.02); if(director.invertT>4) offerFinale(); }
+  if(stage===6){ director.invertT+=dt; if(director.giant){ director.giant.y=lerp(director.giant.y,director.giant.ty,0.012); if(director.invertT>4) offerFinale(); }
     // player's cursor becomes a mark: gains eyes/shadow (handled in render)
   }
   // pointer velocity + idle/lull
@@ -375,6 +377,8 @@ function step(dt){
       if(stage>=2 && tool==="eraser" && pointer.down){ const d=dist(pointer.x,pointer.y,cx,cy);
         if(d<150){ so.state="flee"; so.flee=1; const a=Math.atan2(cy-pointer.y,cx-pointer.x); s.vx+=Math.cos(a)*0.9; s.vy+=Math.sin(a)*0.6-0.2; if(Math.random()<0.02)reactAt(s,"ex"); }
       } else if(so.state==="flee" && so.flee>0){ so.flee-=dt; if(so.flee<=0){ so.state="idle"; } }
+      // merge finale: ease toward your mark
+      if(so.state==="merge"){ s.vx+=Math.sign(pointer.x-cx)*0.06; if(cy>pointer.y+4)s.vy-=0.16; }
       // curiosity: drift toward cursor on lull (ducklings)
       if((so.state==="idle"||so.state==="curious") && !nearPadEdge()){
         const d=dist(pointer.x,pointer.y,cx,cy);
@@ -396,8 +400,10 @@ function step(dt){
     s.sq*=0.86;
     if(s.dizzy>0){ s.dizzy-=dt; s.rot+=0.5; } else if(s.rot){ s.rot*=0.85; if(Math.abs(s.rot)<0.01)s.rot=0; }
     // pupils spring to cursor, shoved by body accel
+    let gx=pointer.x, gy=pointer.y;
+    if(so.state==="merge" && director.giant){ gx=director.giant.x; gy=director.giant.y; }  // at the merge, all eyes turn outward
     for(let e=0;e<so.eyes.length;e++){ const p=so.pupils[e]; const eye=so.eyes[e];
-      const ex=s.x+eye.ox, ey=s.y+eye.oy; let tx=(pointer.x-ex), ty=(pointer.y-ey); const el=Math.hypot(tx,ty)||1; const mr=eye.r*0.45;
+      const ex=s.x+eye.ox, ey=s.y+eye.oy; let tx=(gx-ex), ty=(gy-ey); const el=Math.hypot(tx,ty)||1; const mr=eye.r*0.45;
       tx=tx/el*mr - s.vx*0.6; ty=ty/el*mr - s.vy*0.6;
       p.vx+=(tx-p.x)*0.2; p.vy+=(ty-p.y)*0.2; p.vx*=0.7; p.vy*=0.7; p.x+=p.vx; p.y+=p.vy;
     }
@@ -405,7 +411,14 @@ function step(dt){
     if(so.state==="idle" && Math.abs(s.vx)<0.15 && Math.abs(s.y-(jarFloor()-s.bb.h*0.5))<3){ so.tmr+=dt; if(so.tmr>(FAST?4:10)){ so.state="sleep"; reactAt(s,"z"); } } else so.tmr=0;
     if(so.state==="sleep" && (pointer.speed>4 && dist(pointer.x,pointer.y,cx,cy)<120)){ so.state="idle"; so.tmr=0; }
   }
-  // remember last player shape for the mimic
+  // gentle separation so creatures spread out instead of piling into a column
+  const aw=[]; for(const s of strokes){ if(s.alive&&s.soul&&s.soul.state!=="sleep"&&s!==grabbed&&s.dissolve===undefined&&!s.pending) aw.push(s); }
+  for(let i=0;i<aw.length;i++){ const a=aw[i], ax=a.x+a.bb.w/2, ay=a.y+a.bb.h/2, ar=Math.max(a.bb.w,a.bb.h)*0.4+7;
+    for(let j=i+1;j<aw.length;j++){ const b=aw[j], bx=b.x+b.bb.w/2, by=b.y+b.bb.h/2, br=Math.max(b.bb.w,b.bb.h)*0.4+7;
+      let dx=ax-bx, dy=ay-by, d=Math.hypot(dx,dy)||0.01, min=ar+br;
+      if(d<min){ const push=(min-d)/min*0.5; dx/=d; dy/=d; a.vx+=dx*push; a.vy+=dy*push*0.5; b.vx-=dx*push; b.vy-=dy*push*0.5; } } }
+  // merge finale: creatures gather warmly to your mark, hearts rise
+  if(ending==="merge"){ director.mergeT+=dt; if(Math.random()<0.12){ const c=strokes.filter(x=>x.alive); if(c.length) reactAt(pick(c),"heart"); } }
   // particles
   for(let i=fx.length-1;i>=0;i--){ const p=fx[i]; p.vy+=p.g; p.x+=p.vx; p.y+=p.vy; p.life-=dt*0.9; if(p.life<=0)fx.splice(i,1); }
   if(fx.length>200)fx.splice(0,fx.length-200);
@@ -430,12 +443,13 @@ function baitTick(dt){
 function finaleDetect(dt){
   if(stage<6 || !director.offered || ending) return;
   const cruel=L.erasedAlive>=5;
-  // B: hold-drag erase — pointer down, held, moving across, >=2s
-  if(pointer.down){ director.holdT+=dt; director.holdMoved+=pointer.speed;
+  // B: the consent gesture — pick up the offered eraser, then a slow deliberate hold-drag (>=2s).
+  //    Only counts once the eraser is actually in hand (director.consent), so it can never be an accident.
+  if(pointer.down && director.consent){ director.holdT+=dt; director.holdMoved+=pointer.speed;
     if(director.holdT>2 && director.holdMoved>120){ doErase(!cruel); }
   } else { director.holdT=0; director.holdMoved=0; }
-  // A: hold still and let them gather (low cruelty only)
-  if(!cruel){ if(sinceInput> (FAST?3:6)){ const near=strokes.filter(s=>s.alive && dist(s.x+s.bb.w/2,s.y+s.bb.h/2,pointer.x,pointer.y)<160).length; if(near>=2) doMerge(); } }
+  // A: do nothing — hold still and let them gather to you (only offered to a gentle player)
+  if(!cruel && !director.consent){ if(sinceInput> (FAST?3:6)){ const near=strokes.filter(s=>s.alive && dist(s.x+s.bb.w/2,s.y+s.bb.h/2,pointer.x,pointer.y)<170).length; if(near>=2) doMerge(); } }
 }
 
 /* ===================================================================
@@ -523,9 +537,10 @@ function drawNib(x,y,col,scale){ ctx.save(); ctx.translate(x,y); ctx.scale(scale
   ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(6,-16); ctx.lineTo(10,-13); ctx.closePath(); ctx.fill();
   ctx.fillStyle=shade(col,0.4); ctx.fillRect(6,-30,4,16); ctx.restore(); }
 function drawEraser(x,y){ ctx.save(); ctx.translate(x,y); ctx.fillStyle="#e4b8c4"; roundRect(-13,-9,26,18,6); ctx.fill(); ctx.strokeStyle="#c99aa8"; ctx.stroke(); ctx.restore(); }
-function drawGiantCursor(x,y){ ctx.save(); ctx.translate(x,y); ctx.globalAlpha=0.85; ctx.fillStyle=css("--ink");
-  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(46,-120); ctx.lineTo(78,-100); ctx.closePath(); ctx.fill();
-  ctx.fillStyle=shade(css("--ink"),0.3); ctx.fillRect(46,-260,30,150); ctx.restore(); }
+function drawGiantCursor(x,y){ ctx.save(); ctx.translate(x,y); ctx.globalAlpha=0.6; ctx.fillStyle=css("--ink");
+  // a soft pencil, held loosely — curious, not a blade
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(44,-118); ctx.quadraticCurveTo(60,-112,76,-100); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=shade(css("--ink"),0.35); roundRect(44,-260,30,150,8); ctx.fill(); ctx.restore(); }
 function drawSelfMark(x,y){ // your cursor, now a mark among them: shadow + tiny eyes
   ctx.save(); ctx.translate(x,y);
   ctx.globalAlpha=0.14; ctx.fillStyle="#000"; ctx.beginPath(); ctx.ellipse(6,10,10,4,0,0,TAU); ctx.fill(); ctx.globalAlpha=1;
@@ -537,12 +552,15 @@ function drawSelfMark(x,y){ // your cursor, now a mark among them: shadow + tiny
   ctx.restore();
 }
 function drawTray(){
+  const trayA=clamp((view.s-0.55)/0.45,0,1); if(trayA<=0) return;   // fade out as the pad recedes
+  ctx.save(); ctx.globalAlpha=trayA;
   for(const d of tray.dots){ ctx.fillStyle=d.c; ctx.beginPath(); ctx.arc(d.x,d.y,d.r*(d.c===color&&tool==="pen"?1.35:1),0,TAU); ctx.fill();
     if(d.c===color&&tool==="pen"){ ctx.strokeStyle=css("--ink"); ctx.lineWidth=1.5; ctx.stroke(); } }
   const e=tray.eraser; ctx.fillStyle="#e4b8c4"; roundRect(e.x-14,e.y-10,28,20,7); ctx.fill();
   if(tool==="eraser"){ ctx.strokeStyle=css("--ink"); ctx.lineWidth=1.5; ctx.stroke(); }
   // dog-ear (undo)
   ctx.fillStyle=css("--paper2"); ctx.strokeStyle=css("--edge"); ctx.beginPath(); ctx.moveTo(W,H-26); ctx.lineTo(W,H); ctx.lineTo(W-26,H); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
 }
 function drawGone(){ ctx.fillStyle=css("--paper"); ctx.fillRect(0,0,W,H); }
 
@@ -553,6 +571,8 @@ function pos(e){ return {x:e.clientX, y:e.clientY}; }
 cv.addEventListener("pointerdown",e=>{ unlock(); cv.setPointerCapture(e.pointerId); const p=pos(e);
   pointer.x=p.x;pointer.y=p.y;pointer.down=true;pointer.type=e.pointerType;pointer.pressure=e.pressure;
   sinceInput=0; lull=false;
+  // finale: the pad is drawn; you can pick up the offered eraser (consent), or do nothing.
+  if(stage>=6 && director.offered){ if(director.finale && dist(p.x,p.y,director.finale.eraser.x,director.finale.eraser.y)<48){ director.consent=true; } return; }
   // tray hit?
   if(hitTray(p.x,p.y)){ return; }
   // dog-ear undo
@@ -565,11 +585,12 @@ cv.addEventListener("pointerdown",e=>{ unlock(); cv.setPointerCapture(e.pointerI
 });
 addEventListener("pointermove",e=>{ const p=pos(e); pointer.x=p.x;pointer.y=p.y;pointer.pressure=e.pressure;
   if(!pointer.down) return;
+  if(stage>=6 && director.offered) return; // finale: no drawing; your cursor is just a mark now
   if(grabbed){ const nx=p.x-grabbed.grabX, ny=p.y-grabbed.grabY; grabbed.vx=(nx-grabbed.x)*0.6; grabbed.vy=(ny-grabbed.y)*0.6; grabbed.x=nx; grabbed.y=ny; return; }
   if(tool==="eraser" && pointer.down){ eraseAt(p.x,p.y); return; }
   if(drawing){ if(getCo) for(const ev of getCo.call(e)){ extendStroke(ev.clientX,ev.clientY); } else extendStroke(p.x,p.y); }
 });
-addEventListener("pointerup",e=>{ pointer.down=false;
+addEventListener("pointerup",e=>{ pointer.down=false; director.consent=false; director.holdT=0; director.holdMoved=0;
   if(grabbed){ const sp=Math.hypot(grabbed.vx,grabbed.vy); if(sp>10){ if(grabbed.soul){grabbed.soul.state="idle"; reactAt(grabbed,"ex"); grabbed.dizzy=1;} } grabbed=null; return; }
   if(drawing){ // finalize + remember shape for the mimic
     const hadLen=drawing.raw.length; endStroke();
@@ -606,7 +627,7 @@ function loop(now){ let dt=(now-last)/1000; last=now; dt=Math.min(dt,0.05);
 document.addEventListener("visibilitychange",()=>{ running=!document.hidden; last=performance.now(); if(!document.hidden) saveLedger(); });
 
 /* ---- boot ---------------------------------------------------------- */
-if(FAST){ window.__dbg=()=>({n:strokes.length, alive:strokes.filter(s=>s.alive).length, pending:strokes.filter(s=>s.pending).length, stage, agency:+agency.toFixed(2), drawn:L.drawn, undrew:L.undrew, erasedAlive:L.erasedAlive, tool, color, ending, view:+view.s.toFixed(2), offered:director.offered}); }
+if(FAST){ window.__dbg=()=>({n:strokes.length, alive:strokes.filter(s=>s.alive).length, pending:strokes.filter(s=>s.pending).length, stage, agency:+agency.toFixed(2), drawn:L.drawn, undrew:L.undrew, erasedAlive:L.erasedAlive, tool, color, ending, view:+view.s.toFixed(2), offered:director.offered, consent:director.consent, ex:director.finale?Math.round(director.finale.eraser.x):0, ey:director.finale?Math.round(director.finale.eraser.y):0}); }
 function boot(){ resize(); drawFavicon(); requestAnimationFrame(loop); saveLedger(); }
 function drawFavicon(){ try{const c=document.createElement("canvas");c.width=c.height=32;const x=c.getContext("2d");
   x.fillStyle=css("--paper");x.fillRect(0,0,32,32); x.fillStyle=css("--ink"); x.beginPath();x.moveTo(8,26);x.lineTo(20,6);x.lineTo(26,10);x.closePath();x.fill();
