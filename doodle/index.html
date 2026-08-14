@@ -28,12 +28,13 @@
    Pointer only. No text. No instructions. Pull at it.
    Built from a design spec + adversarial critique (see DESIGN in repo).
    ===================================================================== */
+const VERSION="3.5";                                        // polish → 3.5 · menagerie → 3.8 · sketchbook → 4.0
 const cv=document.getElementById("pad"), ctx=cv.getContext("2d");
 const FAST=/(?:\?|&)fast/.test(location.search);            // dev/impatient accelerator
 const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let DPR=Math.min(2, window.devicePixelRatio||1);
 let W=0,H=0;
-function resize(){ W=innerWidth; H=innerHeight; cv.width=Math.floor(W*DPR); cv.height=Math.floor(H*DPR); ctx.setTransform(DPR,0,0,DPR,0,0); layoutTray(); baseDirty=true; }
+function resize(){ W=innerWidth; H=innerHeight; cv.width=Math.floor(W*DPR); cv.height=Math.floor(H*DPR); ctx.setTransform(DPR,0,0,DPR,0,0); refreshTheme(); layoutTray(); baseDirty=true; }
 addEventListener("resize",resize);
 
 /* ---- utils --------------------------------------------------------- */
@@ -44,6 +45,9 @@ const lerp=(a,b,t)=>a+(b-a)*t;
 const dist=(x,y,X,Y)=>Math.hypot(x-X,y-Y);
 const TAU=Math.PI*2;
 function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+let THEME={paper:"#faf6ee",paper2:"#f3eee2",ink:"#2b2822",edge:"#e5ddcc"};
+function refreshTheme(){ THEME.paper=css("--paper")||THEME.paper; THEME.paper2=css("--paper2")||THEME.paper2; THEME.ink=css("--ink")||THEME.ink; THEME.edge=css("--edge")||THEME.edge; }
+try{ matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{ refreshTheme(); }); }catch(e){}
 function shade(hex,f){ // lighten/darken hex
   const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255;
   r=clamp(Math.round(r+(f>0?(255-r)*f:r*f)),0,255); g=clamp(Math.round(g+(f>0?(255-g)*f:g*f)),0,255); b=clamp(Math.round(b+(f>0?(255-b)*f:b*f)),0,255);
@@ -95,28 +99,30 @@ let pointer={x:innerWidth/2,y:innerHeight/2,px:0,py:0,down:false,type:"mouse",vx
 let drawing=null;             // current stroke buffer
 let grabbed=null;             // creature being flung
 let baseDirty=true;
+let page=0, corner=null;      // sketchbook (Update 2): current page + dog-ear peel state
 
 /* view transform (for the zoom-out reveal) */
 let view={s:1,ox:0,oy:0,ts:1,tox:0,toy:0};
 
 /* ---- stroke capture ------------------------------------------------ */
 function beginStroke(x,y){
-  drawing={id:nextId++, author:0, color:color, raw:[x,y,widthAt(0)], lastx:x,lasty:y, lastt:performance.now()};
+  drawing={id:nextId++, author:0, color:color, raw:[x,y,widthAt(0)], w:widthAt(0), lastx:x,lasty:y, lastt:performance.now()};
 }
 function extendStroke(x,y){
   if(!drawing)return; const t=performance.now(), dt=Math.max(1,t-drawing.lastt);
   const sp=dist(x,y,drawing.lastx,drawing.lasty)/dt;   // px/ms
-  const w=widthAt(sp)*(pointer.type==="pen"&&pointer.pressure?clamp(pointer.pressure*1.6,.4,1.6):1);
-  drawing.raw.push(x,y,w); drawing.lastx=x;drawing.lasty=y;drawing.lastt=t;
+  const pmul=(pointer.type==="pen"&&pointer.pressure)?clamp(pointer.pressure*1.6,.4,1.6):1;
+  drawing.w=lerp(drawing.w, widthAt(sp)*pmul, 0.35);   // smooth, pressure folded into the target
+  drawing.raw.push(x,y,drawing.w); drawing.lastx=x;drawing.lasty=y;drawing.lastt=t;
 }
-function widthAt(sp){ return clamp(11 - sp*10, 2.2, 12); }   // slow=fat, fast=thin
+function widthAt(sp){ return clamp(13 - sp*6, 3, 14); }   // slow=fat, fast=thin, wider range
 function endStroke(){
   if(!drawing)return; const raw=drawing.raw;
   if(raw.length<6){ // a tap, not a stroke -> seed a tiny dot creature at the point
     seedDot(raw[0],raw[1]); drawing=null; return;
   }
   const s=makeStroke(resample(raw,3), drawing.color, 0);
-  strokes.push(s); L.drawn++; grow(1.0); comeAlive(s, strokes.length===1||L.drawn<=1?true:undefined);
+  strokes.push(s); L.drawn++; sesDrawn++; grow(1.0); comeAlive(s, strokes.length===1||L.drawn<=1?true:undefined);
   drawing=null; saveLedger();
 }
 function resample(raw,spacing){
@@ -144,7 +150,7 @@ function inkPath(g,pts,ox,oy){
 
 /* ---- make a stroke object (+bake sprite, classify) ----------------- */
 function bbox(pts){ let a=1e9,b=1e9,c=-1e9,d=-1e9,mw=0; for(let i=0;i<pts.length;i+=3){a=Math.min(a,pts[i]);c=Math.max(c,pts[i]);b=Math.min(b,pts[i+1]);d=Math.max(d,pts[i+1]);mw=Math.max(mw,pts[i+2]);} return {x:a,y:b,w:c-a,h:d-b,mw}; }
-function makeStroke(pts,col,author){
+function makeStroke(pts,col,author,id){
   const bb=bbox(pts), pad=Math.ceil(bb.mw)+6;
   const spr=document.createElement("canvas"); spr.width=Math.max(2,Math.ceil((bb.w+pad*2)*DPR)); spr.height=Math.max(2,Math.ceil((bb.h+pad*2)*DPR));
   const sg=spr.getContext("2d"); sg.setTransform(DPR,0,0,DPR,0,0); sg.fillStyle=col;
@@ -152,7 +158,7 @@ function makeStroke(pts,col,author){
   const closed=dist(pts[0],pts[1],pts[pts.length-3],pts[pts.length-2])< Math.max(18,bb.mw*2) && (bb.w+bb.h)>40;
   let kind="worm"; const span=bb.w+bb.h;
   if(span<26) kind="dot"; else if(closed) kind="blob"; else if(pts.length>90 && bb.w<span*0.7) kind="fuzz"; else kind="worm";
-  return { id:author?nextId++:drawing.id, author, pts, color:col, bb, sprW:bb.w+pad*2, sprH:bb.h+pad*2, spr, ox, oy,
+  return { id: id!=null ? id : (author ? nextId++ : (drawing ? drawing.id : nextId++)), author, pts, color:col, bb, sprW:bb.w+pad*2, sprH:bb.h+pad*2, spr, ox, oy,
     hx:bb.x, hy:bb.y, x:bb.x, y:bb.y, vx:0,vy:0, rot:0, scale:1, sq:0, closed, kind,
     alive:false, soul:null, born:performance.now(), phase:rnd(0,TAU), settled:true, growT:1 };
 }
@@ -192,6 +198,7 @@ function reactAt(s,kind){
    =================================================================== */
 let stage=1;   // always start at the toy; memory shows through behaviour, not by skipping the joy
 let agency=0, T=0, sinceInput=0, sinceIdleDraw=0, lull=false;
+let sesDrawn=0, sesUndrew=0;                 // SESSION-local counts gate stages (persisted L.* would rush a returning player)
 const K=FAST?7:1;                            // accelerator
 function grow(n){ agency=clamp(agency+n*0.01*K,0,1); }
 let director={otherCursor:null, invertT:0, finale:null, offered:false, ending:"", holdT:0, holdMoved:0, consent:false, mergeT:0, giant:null, sinceOffer:0};
@@ -200,10 +207,10 @@ function directorTick(dt){
   T+=dt; L.timeMs+=dt*1000;
   // advance stages by action + soft time floors (so any play style progresses)
   const t=T;
-  if(stage<2 && L.drawn>=3 && t>(FAST?6:35)) enterStage(2);
-  if(stage<3 && L.drawn>=6 && t>(FAST?12:55) && lull) padDrawsBack();
-  if(stage>=3 && stage<4 && L.undrew>=2 && lastPlayerShape) triggerMimic();
-  if(stage>=4 && stage<5 && (t>(FAST?30:110) || L.undrew>=4)) enterOtherHand();
+  if(stage<2 && sesDrawn>=3 && t>(FAST?6:35)) enterStage(2);
+  if(stage<3 && sesDrawn>=6 && t>(FAST?12:55) && lull) padDrawsBack();
+  if(stage>=3 && stage<4 && sesUndrew>=2 && lastPlayerShape) triggerMimic();
+  if(stage>=4 && stage<5 && (t>(FAST?30:110) || sesUndrew>=4)) enterOtherHand();
   if(stage>=5 && stage<6 && (t>(FAST?45:170) || director.otherHandActs>=3 || nearPadEdge())) beginInversion();
   // occasional pad activity once awake
   if(stage>=3 && lull && Math.random()<0.006*K && strokes.filter(s=>s.alive).length<40) padDrawsBack(true);
@@ -220,7 +227,7 @@ function padDrawsBack(minor){
   const pts=genPadStroke(ax,ay, minor?0.6:1);
   const s=makeStroke(pts, color, 1);
   s.growT=0; s.settled=false; s.alive=false; s.pending=true;
-  strokes.push(s); L.undrew++; saveLedger();
+  strokes.push(s); L.undrew++; sesUndrew++; saveLedger();
 }
 function genPadStroke(cx,cy,scale){
   // a small hand-drawn-looking blob/loop in the player's palette
@@ -256,7 +263,7 @@ function triggerMimic(){
   const ax=clamp(watcher.x+rnd(40,90),60,W-80), ay=clamp(watcher.y,80,jarFloor()-20);
   const pts=warpShape(lastPlayerShape, ax, ay);
   const s=makeStroke(pts, color, 1); s.growT=0; s.settled=false; s.alive=false; s.pending=true; s.mimic=true;
-  strokes.push(s); L.undrew++; reactAt(watcher,"note");
+  strokes.push(s); L.undrew++; sesUndrew++; reactAt(watcher,"note");
   lastPlayerShape=null;
 }
 function warpShape(src,cx,cy){
@@ -318,19 +325,16 @@ function offerFinale(){
   if(director.giant) director.giant.ty=director.giant.y;
   director.finale={eraser:{x:clamp(pointer.x+70,60,W-60), y:clamp(pointer.y,80,H-90)}, merged:0};
 }
-function tryEnd(){
-  if(ending) return;
-  const cruel = L.erasedAlive>=5;
-  // Ending A: hold still / let critters gather (low cruelty). Detect: pointer near-idle 5s while creatures cluster to cursor.
-  // Ending B: slow hold-drag with the offered eraser (>=2s held while moving).
-}
 let ending="";
 function doMerge(){ if(ending)return; ending="merge"; director.mergeT=0; if(director.giant)director.giant.ty=director.giant.y; sChord();
-  for(const s of strokes){ if(s.alive&&s.soul) s.soul.state="merge"; }
+  const alive=strokes.filter(s=>s.alive); let i=0; const n=Math.max(1,alive.length);
+  for(const s of alive){ if(s.soul){ s.soul.state="merge"; s.soul.slot=i/n*TAU; i++; } }
+  view.ts=RM?0.7:0.5; view.tox=W*0.5-(W*0.5)*view.ts; view.toy=H*0.5-(H*0.5)*view.ts;  // re-approach for the tableau
 }
 function doErase(waved){ if(ending)return; ending="erase";
-  // real, consensual: clear the game's own memory
-  wiped=true; try{ localStorage.removeItem(KEY); }catch(e){}
+  // real, consensual: clear EVERYTHING the game kept — snapshot keys first (removing while iterating skips keys)
+  wiped=true;
+  try{ const keys=Object.keys(localStorage).filter(k=>k.indexOf("doodle.")===0 && k!=="doodle.scar"); for(const k of keys) localStorage.removeItem(k); }catch(e){}
   try{ localStorage.setItem("doodle.scar",JSON.stringify({left:Date.now(),drawn:L.drawn})); }catch(e){}
   // each turns to you and gives a little farewell hop, then dissolves
   let i=0; for(const s of strokes){ if(s.alive){ s.wave=waved?1:0; if(waved){ s.vy=-3.2-((i++)%3); s.sq=0.4; reactAt(s,waved?"heart":"dust"); } setTimeout(()=>{ s.dissolve=0.001; }, waved? 700+ (i*40):0); } }
@@ -349,8 +353,10 @@ function step(dt){
   if(stage>=5) otherHandTick(dt);
   // view lerp
   view.s=lerp(view.s,view.ts,0.02); view.ox=lerp(view.ox,view.tox,0.02); view.oy=lerp(view.oy,view.toy,0.02);
-  if(stage===6){ director.invertT+=dt; if(director.offered) director.sinceOffer+=dt; if(director.giant){ director.giant.y=lerp(director.giant.y,director.giant.ty,0.012); if(director.invertT>4) offerFinale(); }
-    // player's cursor becomes a mark: gains eyes/shadow (handled in render)
+  if(stage===6){ director.invertT+=dt; if(director.offered) director.sinceOffer+=dt;
+    if(director.giant){ const gi=director.giant; gi.y=lerp(gi.y,gi.ty,0.012);
+      if(!RM){ gi.bob=(gi.bob||0)+dt; gi.lean=lerp(gi.lean||0, clamp((pointer.x-gi.x)/W*0.3,-0.12,0.12), 0.05); }  // curious, alive — a soft lean toward your mark
+      if(director.invertT>4) offerFinale(); }
   }
   // pointer velocity + idle/lull
   pointer.vx=pointer.x-pointer.px; pointer.vy=pointer.y-pointer.py; pointer.speed=Math.hypot(pointer.vx,pointer.vy);
@@ -368,18 +374,22 @@ function step(dt){
     if(s.dissolve!==undefined){ s.dissolve+=dt*0.6; if(s.dissolve>1){ strokes.splice(i,1); } continue; }
     const so=s.soul; if(!so) continue;
     // sleep governor
-    const faraway=false;
     if(so.state!=="sleep"){ awake++; if(awake>awakeCap){ so.state="sleep"; } }
     // physics
     const cx=s.x+s.bb.w/2, cy=s.y+s.bb.h/2;
     if(s!==grabbed && so.state!=="sleep"){
-      s.vy+=0.28*dt*60/60; // gravity
+      if(so.state!=="merge"&&so.state!=="nuzzle") s.vy+=0.28*dt*60/60; // gravity (skip while gathering)
       // flee the eraser (stage>=2)
       if(stage>=2 && tool==="eraser" && pointer.down){ const d=dist(pointer.x,pointer.y,cx,cy);
         if(d<150){ so.state="flee"; so.flee=1; const a=Math.atan2(cy-pointer.y,cx-pointer.x); s.vx+=Math.cos(a)*0.9; s.vy+=Math.sin(a)*0.6-0.2; if(Math.random()<0.02)reactAt(s,"ex"); }
       } else if(so.state==="flee" && so.flee>0){ so.flee-=dt; if(so.flee<=0){ so.state="idle"; } }
-      // merge finale: ease toward your mark
-      if(so.state==="merge"){ s.vx+=Math.sign(pointer.x-cx)*0.06; if(cy>pointer.y+4)s.vy-=0.16; }
+      // merge finale: ease into a ring slot around your mark (world coords through the zoom-out)
+      if(so.state==="merge"){
+        const pwx=(pointer.x-view.ox)/view.s, pwy=(pointer.y-view.oy)/view.s, rr=90/view.s;
+        const tx=pwx+Math.cos(so.slot||0)*rr, ty=pwy+Math.sin(so.slot||0)*rr;
+        s.vx+=(tx-cx)*0.02; s.vy+=(ty-cy)*0.02; s.vx*=0.85; s.vy*=0.85;
+        if(director.mergeT>(RM?2:4)){ s.vx*=0.5; s.vy*=0.5; }   // settle into a held pose
+      }
       // curiosity: drift toward cursor on lull (ducklings)
       if((so.state==="idle"||so.state==="curious") && !nearPadEdge()){
         const d=dist(pointer.x,pointer.y,cx,cy);
@@ -387,33 +397,38 @@ function step(dt){
         else if(so.state==="curious"&&d>320) so.state="idle";
       }
       // temperament flavour
-      if(so.temper==="bouncy" && Math.abs(s.vy)<0.4 && Math.random()<0.02){ s.vy=-3.4; sHop(); }
+      if(so.temper==="bouncy" && Math.abs(s.vy)<0.4 && Math.random()<0.02){ s.vy=-3.4; sHop(s); }
+      if(so.temper==="hot" && Math.random()<0.03){ s.vx+=rnd(-1.2,1.2); }   // restless darts
       s.vx*=0.96; s.x+=s.vx; s.y+=s.vy;
       // floor bounce
       const fl=jarFloor()-s.bb.h*0.5;
-      if(s.y> fl){ s.y=fl; if(s.vy>1.2){ s.sq=Math.min(1,s.vy*0.08); sHop(); } s.vy*=-0.42; s.vx*=0.86; }
+      if(s.y> fl){ if(s.vy>3 && !RM) reactAt(s,"dust"); s.y=fl; if(s.vy>1.2){ s.sq=Math.min(1,s.vy*0.08); sHop(s); } s.vy*=-0.42; s.vx*=0.86; }
       // walls
       if(s.x<6){s.x=6;s.vx=Math.abs(s.vx)*0.5;} if(s.x>W-s.bb.w-6){s.x=W-s.bb.w-6;s.vx=-Math.abs(s.vx)*0.5;}
       if(s.y<40){s.y=40;s.vy=Math.abs(s.vy)*0.4;}
     }
     // soul animation
     so.wob+=dt*(RM?1.2:2.4); so.breathe+=dt*1.6; so.blink-=dt; if(so.blink<-0.12)so.blink=rnd(2.5,6);
+    so.mood=lerp(so.mood,0,dt*2);   // moods ease back to neutral
     s.sq*=0.86;
     if(s.dizzy>0){ s.dizzy-=dt; s.rot+=0.5; } else if(s.rot){ s.rot*=0.85; if(Math.abs(s.rot)<0.01)s.rot=0; }
     // pupils spring to cursor, shoved by body accel
     let gx=pointer.x, gy=pointer.y;
+    if(pointer.type==="touch" && !pointer.down){ if(!so.gaze||so.gazeT<T){ so.gaze={x:rnd(40,W-40),y:rnd(60,H-100)}; so.gazeT=T+rnd(2,5); } gx=so.gaze.x; gy=so.gaze.y; }  // no hover on touch: gentle wander gaze
     if(so.state==="merge" && director.giant){ gx=director.giant.x; gy=director.giant.y; }  // at the merge, all eyes turn outward
     for(let e=0;e<so.eyes.length;e++){ const p=so.pupils[e]; const eye=so.eyes[e];
       const ex=s.x+eye.ox, ey=s.y+eye.oy; let tx=(gx-ex), ty=(gy-ey); const el=Math.hypot(tx,ty)||1; const mr=eye.r*0.45;
       tx=tx/el*mr - s.vx*0.6; ty=ty/el*mr - s.vy*0.6;
       p.vx+=(tx-p.x)*0.2; p.vy+=(ty-p.y)*0.2; p.vx*=0.7; p.vy*=0.7; p.x+=p.vx; p.y+=p.vy;
     }
-    // idle -> sleep zzz (perf + life)
-    if(so.state==="idle" && Math.abs(s.vx)<0.15 && Math.abs(s.y-(jarFloor()-s.bb.h*0.5))<3){ so.tmr+=dt; if(so.tmr>(FAST?4:10)){ so.state="sleep"; reactAt(s,"z"); } } else so.tmr=0;
+    // idle -> sleep zzz (perf + life); sleepy naps sooner, hot resists
+    if(so.state==="idle" && Math.abs(s.vx)<0.15 && Math.abs(s.y-(jarFloor()-s.bb.h*0.5))<3){ so.tmr+=dt;
+      const nap = so.temper==="sleepy"?(FAST?2:5) : so.temper==="hot"?(FAST?7:18) : (FAST?4:10);
+      if(so.tmr>nap){ so.state="sleep"; reactAt(s,"z"); } } else so.tmr=0;
     if(so.state==="sleep" && (pointer.speed>4 && dist(pointer.x,pointer.y,cx,cy)<120)){ so.state="idle"; so.tmr=0; }
   }
   // gentle separation so creatures spread out instead of piling into a column
-  const aw=[]; for(const s of strokes){ if(s.alive&&s.soul&&s.soul.state!=="sleep"&&s!==grabbed&&s.dissolve===undefined&&!s.pending) aw.push(s); }
+  const aw=[]; for(const s of strokes){ if(s.alive&&s.soul&&s.soul.state!=="sleep"&&s.soul.state!=="merge"&&s.soul.state!=="nuzzle"&&s!==grabbed&&s.dissolve===undefined&&!s.pending) aw.push(s); }
   for(let i=0;i<aw.length;i++){ const a=aw[i], ax=a.x+a.bb.w/2, ay=a.y+a.bb.h/2, ar=Math.max(a.bb.w,a.bb.h)*0.4+7;
     for(let j=i+1;j<aw.length;j++){ const b=aw[j], bx=b.x+b.bb.w/2, by=b.y+b.bb.h/2, br=Math.max(b.bb.w,b.bb.h)*0.4+7;
       let dx=ax-bx, dy=ay-by, d=Math.hypot(dx,dy)||0.01, min=ar+br;
@@ -435,8 +450,9 @@ function step(dt){
 let bait=null;
 function baitTick(dt){
   if(stage>1)return;
-  if(!bait && L.drawn===0 && strokes.length===0){ // create a resting demo doodle
-    const cx=W/2,cy=H/2; const pts=genPadStroke(cx,cy,1); bait=makeStroke(pts, css("--ink"), 1); bait.id=nextId++; strokes.push(bait); comeAlive(bait); bait.soul.temper="social"; }
+  if(!bait && L.drawn===0 && strokes.length===0){ // create a resting demo doodle with an unmissable birth
+    const cx=W/2,cy=H/2; const pts=genPadStroke(cx,cy,1); bait=makeStroke(pts, THEME.ink, 1); strokes.push(bait);
+    bait.bait=true; comeAlive(bait); bait.soul.temper="social"; bait.vy=-3.2; bait.sq=0.6; reactAt(bait,"spark"); }
   if(bait && L.drawn>0){ bait=null; } // once the player draws, stop babysitting
 }
 
@@ -465,18 +481,18 @@ function render(){
   ctx.setTransform(DPR,0,0,DPR,0,0);
   ctx.clearRect(0,0,W,H);
   // backdrop (inversion)
-  if(backdrop){ ctx.globalAlpha=clamp((0.14-view.s)/0.14*0+ (1-view.s)*1.1,0,1); ctx.drawImage(backdrop,0,0,W,H); ctx.globalAlpha=1; }
-  else { ctx.fillStyle=css("--paper"); ctx.fillRect(0,0,W,H); }
+  if(backdrop){ ctx.globalAlpha=clamp((1-view.s)*1.1,0,1); ctx.drawImage(backdrop,0,0,W,H); ctx.globalAlpha=1; }
+  else { ctx.fillStyle=THEME.paper; ctx.fillRect(0,0,W,H); }
   ctx.save();
   ctx.translate(view.ox,view.oy); ctx.scale(view.s,view.s);
   // the pad's own sheet (so the zoom-out shows it as one small sheet)
-  if(view.s<0.98){ ctx.fillStyle=css("--paper"); ctx.strokeStyle=css("--edge"); ctx.lineWidth=2/view.s; roundRect(0,0,W,H,10); ctx.fill(); ctx.stroke(); }
+  if(view.s<0.98){ ctx.fillStyle=THEME.paper; ctx.strokeStyle=THEME.edge; ctx.lineWidth=2/view.s; roundRect(0,0,W,H,10); ctx.fill(); ctx.stroke(); }
   // strokes
   for(const s of strokes) drawStroke(s);
   // erased-ghost handled inline
   ctx.restore();
-  // giant cursor (inversion)
-  if(director.giant){ drawGiantCursor(director.giant.x,director.giant.y); }
+  // giant cursor (inversion) — a soft bob so it reads curious/alive
+  if(director.giant){ const gi=director.giant; drawGiantCursor(gi.x, gi.y + ((!RM&&gi.bob)?Math.sin(gi.bob*1.1)*3:0)); }
   // other-hand cursor
   if(director.otherCursor&&director.otherCursor.active) drawNib(director.otherCursor.x,director.otherCursor.y,"#5a5346",1.6);
   // tray
@@ -513,18 +529,22 @@ function drawStroke(s){
   if(s.alive){ ctx.save(); ctx.globalAlpha=alpha*0.13; ctx.fillStyle="#000"; ctx.beginPath(); ctx.ellipse(0,bh/2+6,bw*0.42,5,0,0,TAU); ctx.fill(); ctx.restore(); }
   const sq=1-s.sq*0.4, st=1+s.sq*0.4;
   const wob=(s.alive&&so&&!RM)?Math.sin(so.wob)*0.03:0;
-  ctx.rotate((s.rot||0)+wob); ctx.scale(st,sq);
+  const br=(s.alive&&so&&!RM)?Math.sin(so.breathe)*0.02:0;   // breathing
+  const gsc=s.grow||1;
+  ctx.rotate((s.rot||0)+wob); ctx.scale(st*(1-br)*gsc, sq*(1+br)*gsc);
   // the baked ink, centered
   ctx.drawImage(s.spr, -bw/2-pad, -bh/2-pad, s.sprW, s.sprH);
   // face
   if(s.alive && so){
     const asleep=so.state==="sleep", flee=so.state==="flee";
+    const blinking = !asleep && so.blink<0 && so.blink>-0.12;   // brief lid-close
     for(let e=0;e<so.eyes.length;e++){ const eye=so.eyes[e], p=so.pupils[e]||{x:0,y:0};
       const ex=-bw/2+eye.ox, ey=-bh/2+eye.oy;
-      if(asleep){ ctx.strokeStyle="#1e1e1e"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(ex-eye.r*0.7,ey); ctx.lineTo(ex+eye.r*0.7,ey); ctx.stroke(); continue; }
+      if(asleep||blinking){ ctx.strokeStyle="#1e1e1e"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(ex-eye.r*0.7,ey); ctx.lineTo(ex+eye.r*0.7,ey); ctx.stroke(); continue; }
       ctx.fillStyle="#f6f6f1"; ctx.beginPath(); ctx.arc(ex,ey,eye.r,0,TAU); ctx.fill();
-      const pr=flee?eye.r*0.3:eye.r*0.42;
-      ctx.fillStyle="#1c1c1c"; ctx.beginPath(); ctx.arc(ex+p.x, ey+p.y-(flee?eye.r*0.2:0), pr,0,TAU); ctx.fill();
+      const pr=flee?eye.r*0.3:eye.r*0.42, px=ex+p.x, py=ey+p.y-(flee?eye.r*0.2:0);
+      ctx.fillStyle="#1c1c1c"; ctx.beginPath(); ctx.arc(px,py,pr,0,TAU); ctx.fill();
+      ctx.fillStyle="rgba(255,255,255,.85)"; ctx.beginPath(); ctx.arc(px-pr*0.35,py-pr*0.5,pr*0.34,0,TAU); ctx.fill(); // glint
     }
     if(!asleep){ ctx.strokeStyle="#1c1c1c"; ctx.lineWidth=Math.max(1.5,Math.min(bw,bh)*0.05);
       const mood=flee?-0.7:((so.mood||0)+(so.state==="curious"?0.35:0));
@@ -543,10 +563,12 @@ function drawNib(x,y,col,scale){ ctx.save(); ctx.translate(x,y); ctx.scale(scale
   ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(6,-16); ctx.lineTo(10,-13); ctx.closePath(); ctx.fill();
   ctx.fillStyle=shade(col,0.4); ctx.fillRect(6,-30,4,16); ctx.restore(); }
 function drawEraser(x,y){ ctx.save(); ctx.translate(x,y); ctx.fillStyle="#e4b8c4"; roundRect(-13,-9,26,18,6); ctx.fill(); ctx.strokeStyle="#c99aa8"; ctx.stroke(); ctx.restore(); }
-function drawGiantCursor(x,y){ ctx.save(); ctx.translate(x,y); ctx.globalAlpha=0.6; ctx.fillStyle=css("--ink");
+function drawGiantCursor(x,y){ ctx.save(); ctx.translate(x,y);
+  const lean=director.giant&&director.giant.lean||0; ctx.rotate(lean);
+  ctx.globalAlpha=0.6; ctx.fillStyle=THEME.ink;
   // a soft pencil, held loosely — curious, not a blade
   ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(44,-118); ctx.quadraticCurveTo(60,-112,76,-100); ctx.closePath(); ctx.fill();
-  ctx.fillStyle=shade(css("--ink"),0.35); roundRect(44,-260,30,150,8); ctx.fill(); ctx.restore(); }
+  ctx.fillStyle=shade(THEME.ink,0.35); roundRect(44,-260,30,150,8); ctx.fill(); ctx.restore(); }
 function drawSelfMark(x,y){ // your cursor, now a mark among them: shadow + tiny eyes
   ctx.save(); ctx.translate(x,y);
   ctx.globalAlpha=0.14; ctx.fillStyle="#000"; ctx.beginPath(); ctx.ellipse(6,10,10,4,0,0,TAU); ctx.fill(); ctx.globalAlpha=1;
@@ -561,14 +583,17 @@ function drawTray(){
   const trayA=clamp((view.s-0.55)/0.45,0,1); if(trayA<=0) return;   // fade out as the pad recedes
   ctx.save(); ctx.globalAlpha=trayA;
   for(const d of tray.dots){ ctx.fillStyle=d.c; ctx.beginPath(); ctx.arc(d.x,d.y,d.r*(d.c===color&&tool==="pen"?1.35:1),0,TAU); ctx.fill();
-    if(d.c===color&&tool==="pen"){ ctx.strokeStyle=css("--ink"); ctx.lineWidth=1.5; ctx.stroke(); } }
+    if(d.c===color&&tool==="pen"){ ctx.strokeStyle=THEME.ink; ctx.lineWidth=1.5; ctx.stroke(); } }
   const e=tray.eraser; ctx.fillStyle="#e4b8c4"; roundRect(e.x-14,e.y-10,28,20,7); ctx.fill();
-  if(tool==="eraser"){ ctx.strokeStyle=css("--ink"); ctx.lineWidth=1.5; ctx.stroke(); }
-  // dog-ear (undo)
-  ctx.fillStyle=css("--paper2"); ctx.strokeStyle=css("--edge"); ctx.beginPath(); ctx.moveTo(W,H-26); ctx.lineTo(W,H); ctx.lineTo(W-26,H); ctx.closePath(); ctx.fill(); ctx.stroke();
+  if(tool==="eraser"){ ctx.strokeStyle=THEME.ink; ctx.lineWidth=1.5; ctx.stroke(); }
+  // dog-ear (turn page / tap = undo)
+  ctx.fillStyle=THEME.paper2; ctx.strokeStyle=THEME.edge;
+  const pk=corner?corner.peel*Math.min(W,H)*0.4:0;                 // peel curl grows as you drag it
+  ctx.beginPath(); ctx.moveTo(W,H-26-pk); ctx.lineTo(W,H); ctx.lineTo(W-26-pk,H); ctx.closePath(); ctx.fill(); ctx.stroke();
+  if(page>0){ ctx.beginPath(); ctx.moveTo(0,H-26); ctx.lineTo(0,H); ctx.lineTo(26,H); ctx.closePath(); ctx.fill(); ctx.stroke(); } // flip-back appears once there are prior pages
   ctx.restore();
 }
-function drawGone(){ ctx.fillStyle=css("--paper"); ctx.fillRect(0,0,W,H); }
+function drawGone(){ ctx.fillStyle=THEME.paper; ctx.fillRect(0,0,W,H); }
 
 /* ===================================================================
    POINTER
@@ -597,7 +622,10 @@ addEventListener("pointermove",e=>{ const p=pos(e); pointer.x=p.x;pointer.y=p.y;
   if(drawing){ if(getCo) for(const ev of getCo.call(e)){ extendStroke(ev.clientX,ev.clientY); } else extendStroke(p.x,p.y); }
 });
 addEventListener("pointerup",e=>{ pointer.down=false; director.consent=false; director.holdT=0; director.holdMoved=0;
-  if(grabbed){ const sp=Math.hypot(grabbed.vx,grabbed.vy); if(sp>10){ if(grabbed.soul){grabbed.soul.state="idle"; reactAt(grabbed,"ex"); grabbed.dizzy=1;} } grabbed=null; return; }
+  if(grabbed){ const sp=Math.hypot(grabbed.vx,grabbed.vy);
+    if(sp>10){ if(grabbed.soul){grabbed.soul.state="idle"; reactAt(grabbed,"ex"); grabbed.dizzy=1;} }        // flung -> dizzy
+    else if(grabbed.soul){ grabbed.sq=0.5; grabbed.vy=-2.6; grabbed.soul.mood=0.8; grabbed.soul.state="idle"; reactAt(grabbed,pick(["spark","note","heart"])); sPoke(); } // tapped -> startled giggle
+    grabbed=null; return; }
   if(drawing){ // finalize + remember shape for the mimic
     const hadLen=drawing.raw.length; endStroke();
     const last=strokes[strokes.length-1]; if(last&&last.author===0){ lastPlayerShape=last.pts.slice(); }
