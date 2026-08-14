@@ -200,11 +200,11 @@ function directorTick(dt){
   T+=dt; L.timeMs+=dt*1000;
   // advance stages by action + soft time floors (so any play style progresses)
   const t=T;
-  if(stage<2 && L.drawn>=3 && t>(FAST?6:45)) enterStage(2);
-  if(stage<3 && L.drawn>=6 && t>(FAST?12:75) && lull) padDrawsBack();
+  if(stage<2 && L.drawn>=3 && t>(FAST?6:35)) enterStage(2);
+  if(stage<3 && L.drawn>=6 && t>(FAST?12:55) && lull) padDrawsBack();
   if(stage>=3 && stage<4 && L.undrew>=2 && lastPlayerShape) triggerMimic();
-  if(stage>=4 && stage<5 && (t>(FAST?30:240) || L.undrew>=4)) enterOtherHand();
-  if(stage>=5 && stage<6 && (t>(FAST?45:360) || director.otherHandActs>=3 || nearPadEdge())) beginInversion();
+  if(stage>=4 && stage<5 && (t>(FAST?30:110) || L.undrew>=4)) enterOtherHand();
+  if(stage>=5 && stage<6 && (t>(FAST?45:170) || director.otherHandActs>=3 || nearPadEdge())) beginInversion();
   // occasional pad activity once awake
   if(stage>=3 && lull && Math.random()<0.006*K && strokes.filter(s=>s.alive).length<40) padDrawsBack(true);
   if(stage>=3) maybeSweetGesture();
