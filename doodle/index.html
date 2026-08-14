@@ -61,7 +61,8 @@ function loadLedger(){ let s={};
   const prev=s.last||Date.now(); s.last=Date.now(); s.msAway=Date.now()-prev;
   return s;
 }
-function saveLedger(){ try{ localStorage.setItem(KEY, JSON.stringify(L)); }catch(e){} }
+let wiped=false;   // once the player consents to erase, the record stays gone
+function saveLedger(){ if(wiped)return; try{ localStorage.setItem(KEY, JSON.stringify(L)); }catch(e){} }
 let scar=null; try{ scar=JSON.parse(localStorage.getItem("doodle.scar")||"null"); }catch(e){}
 let lastSave=0;
 
@@ -193,7 +194,7 @@ let stage=1;   // always start at the toy; memory shows through behaviour, not b
 let agency=0, T=0, sinceInput=0, sinceIdleDraw=0, lull=false;
 const K=FAST?7:1;                            // accelerator
 function grow(n){ agency=clamp(agency+n*0.01*K,0,1); }
-let director={otherCursor:null, invertT:0, finale:null, offered:false, ending:"", holdT:0, holdMoved:0, consent:false, mergeT:0, giant:null};
+let director={otherCursor:null, invertT:0, finale:null, offered:false, ending:"", holdT:0, holdMoved:0, consent:false, mergeT:0, giant:null, sinceOffer:0};
 
 function directorTick(dt){
   T+=dt; L.timeMs+=dt*1000;
@@ -329,7 +330,7 @@ function doMerge(){ if(ending)return; ending="merge"; director.mergeT=0; if(dire
 }
 function doErase(waved){ if(ending)return; ending="erase";
   // real, consensual: clear the game's own memory
-  try{ localStorage.removeItem(KEY); }catch(e){}
+  wiped=true; try{ localStorage.removeItem(KEY); }catch(e){}
   try{ localStorage.setItem("doodle.scar",JSON.stringify({left:Date.now(),drawn:L.drawn})); }catch(e){}
   // each turns to you and gives a little farewell hop, then dissolves
   let i=0; for(const s of strokes){ if(s.alive){ s.wave=waved?1:0; if(waved){ s.vy=-3.2-((i++)%3); s.sq=0.4; reactAt(s,waved?"heart":"dust"); } setTimeout(()=>{ s.dissolve=0.001; }, waved? 700+ (i*40):0); } }
@@ -348,7 +349,7 @@ function step(dt){
   if(stage>=5) otherHandTick(dt);
   // view lerp
   view.s=lerp(view.s,view.ts,0.02); view.ox=lerp(view.ox,view.tox,0.02); view.oy=lerp(view.oy,view.toy,0.02);
-  if(stage===6){ director.invertT+=dt; if(director.giant){ director.giant.y=lerp(director.giant.y,director.giant.ty,0.012); if(director.invertT>4) offerFinale(); }
+  if(stage===6){ director.invertT+=dt; if(director.offered) director.sinceOffer+=dt; if(director.giant){ director.giant.y=lerp(director.giant.y,director.giant.ty,0.012); if(director.invertT>4) offerFinale(); }
     // player's cursor becomes a mark: gains eyes/shadow (handled in render)
   }
   // pointer velocity + idle/lull
@@ -448,8 +449,13 @@ function finaleDetect(dt){
   if(pointer.down && director.consent){ director.holdT+=dt; director.holdMoved+=pointer.speed;
     if(director.holdT>2 && director.holdMoved>120){ doErase(!cruel); }
   } else { director.holdT=0; director.holdMoved=0; }
-  // A: do nothing — hold still and let them gather to you (only offered to a gentle player)
-  if(!cruel && !director.consent){ if(sinceInput> (FAST?3:6)){ const near=strokes.filter(s=>s.alive && dist(s.x+s.bb.w/2,s.y+s.bb.h/2,pointer.x,pointer.y)<170).length; if(near>=2) doMerge(); } }
+  // A: do nothing — hold still and let them gather to you (gentle player only).
+  //    Give a real window after the offer, and never merge while they're reaching for the eraser.
+  if(!cruel && !director.consent && director.sinceOffer>(FAST?4:8) && sinceInput>(FAST?3:6)){
+    const nearErase = director.finale && dist(pointer.x,pointer.y,director.finale.eraser.x,director.finale.eraser.y)<90;
+    const near = strokes.filter(s=>s.alive && dist(s.x+s.bb.w/2,s.y+s.bb.h/2,pointer.x,pointer.y)<170).length;
+    if(near>=2 && !nearErase) doMerge();
+  }
 }
 
 /* ===================================================================
