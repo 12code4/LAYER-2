@@ -28,7 +28,7 @@
    Pointer only. No text. No instructions. Pull at it.
    Built from a design spec + adversarial critique (see DESIGN in repo).
    ===================================================================== */
-const VERSION="3.5";                                        // polish → 3.5 · menagerie → 3.8 · sketchbook → 4.0
+const VERSION="3.8";                                        // polish → 3.5 · menagerie → 3.8 · sketchbook → 4.0
 const cv=document.getElementById("pad"), ctx=cv.getContext("2d");
 const FAST=/(?:\?|&)fast/.test(location.search);            // dev/impatient accelerator
 const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -70,15 +70,62 @@ function saveLedger(){ if(wiped)return; try{ localStorage.setItem(KEY, JSON.stri
 let scar=null; try{ scar=JSON.parse(localStorage.getItem("doodle.scar")||"null"); }catch(e){}
 let lastSave=0;
 
-/* ---- audio (unlocked on first gesture) ----------------------------- */
-let AC=null; function unlock(){ if(AC)return; try{AC=new(window.AudioContext||window.webkitAudioContext)();}catch(e){} }
-function tone(f,d,v,type){ if(!AC)return; try{const o=AC.createOscillator(),g=AC.createGain();o.type=type||"sine";o.frequency.value=f;g.gain.value=v;o.connect(g);g.connect(AC.destination);o.start();g.gain.exponentialRampToValueAtTime(.0001,AC.currentTime+d);o.stop(AC.currentTime+d+.02);}catch(e){} }
-const sBorn=()=>{tone(520,.09,.05,"triangle");setTimeout(()=>tone(720,.10,.05,"triangle"),70);};
-const sPoke=()=>tone(360+rnd(120),.06,.05,"sine");
-const sHop=()=>tone(300+rnd(80),.04,.03,"sine");
-const sErase=()=>tone(180,.05,.03,"sawtooth");
-const sHeart=()=>{tone(680,.12,.05,"sine");setTimeout(()=>tone(880,.14,.05,"sine"),90);};
-const sChord=()=>{[262,330,392,523].forEach((f,i)=>setTimeout(()=>tone(f,1.6,.05,"sine"),i*60));};
+/* ---- audio: a small generative voice for a living pad --------------
+   One master bus (limiter) so nothing bypasses mute/limiting. Every pitched
+   sound is quantized to one pentatonic scale, so a whole flock can never clash.
+   Sine/triangle for anything alive; the eraser is the one harsh timbre. */
+let AC=null, master=null, busV=null, busUI=null, busAmb=null, conv=null, ambOn=false;
+let muted=!!L.muted, voices=0, lastVoiceT=0; const MAXV=6;
+const SCALE=(()=>{ const t=[]; for(let o=0;o<3;o++) for(const f of [220,262,294,330,392]) t.push(f*Math.pow(2,o)); return t; })(); // A-minor-pentatonic-ish ×3 oct
+function degree(i){ return SCALE[clamp(i|0,0,SCALE.length-1)]; }
+function pitchOffset(t){ return t==="hot"?2 : t==="sleepy"?-3 : t==="bouncy"?1 : 0; }
+function makeIR(sec,decay){ const len=(AC.sampleRate*sec)|0, buf=AC.createBuffer(2,len,AC.sampleRate); for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch); for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay); } return buf; }
+function unlock(){
+  if(AC){ if(AC.state==="suspended"){ try{AC.resume();}catch(e){} } return; }
+  try{
+    AC=new(window.AudioContext||window.webkitAudioContext)();
+    master=AC.createGain(); master.gain.value=muted?0:(RM?0.32:0.5);
+    const lim=AC.createDynamicsCompressor(); lim.threshold.value=-10; lim.ratio.value=12; lim.attack.value=.003; lim.release.value=.18;
+    master.connect(lim); lim.connect(AC.destination);
+    busV=AC.createGain(); busUI=AC.createGain(); busAmb=AC.createGain(); busAmb.gain.value=0;
+    busV.connect(master); busUI.connect(master); busAmb.connect(master);
+    try{ conv=AC.createConvolver(); conv.buffer=makeIR(1.1,3.0); const cg=AC.createGain(); cg.gain.value=0.16; conv.connect(cg); cg.connect(master); }catch(e){ conv=null; }
+    if(!RM) startAmbient();
+  }catch(e){}
+}
+function busOf(n){ return n==="ui"?busUI : n==="amb"?busAmb : busV; }
+function voice(freq,dur,vel,type,pan,busName){
+  if(!AC||muted) return;
+  const now=AC.currentTime;
+  if(busName!=="ui"){ if(voices>=MAXV) return; if(now-lastVoiceT<0.025) return; lastVoiceT=now; }
+  try{
+    const o=AC.createOscillator(), g=AC.createGain(), lp=AC.createBiquadFilter();
+    o.type=type||"sine"; o.frequency.setValueAtTime(freq*0.94, now); o.frequency.exponentialRampToValueAtTime(freq, now+0.03);
+    lp.type="lowpass"; lp.frequency.setValueAtTime(3200, now); lp.frequency.exponentialRampToValueAtTime(700, now+dur);
+    g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(Math.max(0.0015,0.09*(vel||1)), now+0.012); g.gain.exponentialRampToValueAtTime(0.0001, now+dur);
+    o.connect(lp); lp.connect(g);
+    let out=g;
+    if(AC.createStereoPanner){ const pn=AC.createStereoPanner(); pn.pan.value=clamp(pan||0,-1,1); g.connect(pn); out=pn; }
+    out.connect(busOf(busName)); if(conv && busName!=="ui") out.connect(conv);
+    voices++; o.onended=()=>{ voices=Math.max(0,voices-1); }; o.start(now); o.stop(now+dur+0.02);
+  }catch(e){}
+}
+// shared primitive kept for the tray etc. — now routed through the master bus (mute/limiter apply)
+function tone(f,d,v,type){ voice(f,d,(v||.05)/0.09,type,0,"ui"); }
+function startAmbient(){ if(ambOn||!AC||RM) return; ambOn=true; try{
+  for(const [d,det] of [[2,-4],[4,5]]){ const o=AC.createOscillator(),g=AC.createGain(); o.type="sine"; o.frequency.value=degree(d); o.detune.value=det; g.gain.value=0.5; o.connect(g); g.connect(busAmb); o.start(); }
+  busAmb.gain.setTargetAtTime(0.016, AC.currentTime, 3);   // swells in, never snaps
+}catch(e){} }
+function toggleMute(){ muted=!muted; L.muted=muted; saveLedger(); if(master) master.gain.setTargetAtTime(muted?0:(RM?0.32:0.5), AC.currentTime, 0.05); if(!muted) voice(degree(9),0.12,1,"sine",0); trayFlash=0.9; }
+let trayFlash=0;
+const sBorn=(s)=>{ const p=s&&s.soul?s.soul.pitch:8, pn=s&&s.soul?s.soul.pan:0; voice(degree(p),0.14,1,"triangle",pn); setTimeout(()=>voice(degree(p+2),0.16,1,"triangle",pn),70); };
+const sPoke=(s)=>voice(degree((s&&s.soul?s.soul.pitch:10)+3),0.10,1,"sine",s&&s.soul?s.soul.pan:0);
+const sHop=(s)=>voice(degree(s&&s.soul?s.soul.pitch:8),0.06,0.6,"sine",s&&s.soul?s.soul.pan:0);
+const sEat=(s)=>voice(degree((s&&s.soul?s.soul.pitch:8)-2),0.12,0.8,"sine",s&&s.soul?s.soul.pan:0);
+const sNuzzle=(a,b)=>{ voice(degree(a&&a.soul?a.soul.pitch:8),0.18,0.6,"sine",-0.2); voice(degree((b&&b.soul?b.soul.pitch:8)+2),0.18,0.6,"sine",0.2); };
+const sHeart=()=>{ voice(degree(9),0.12,1,"sine",0); setTimeout(()=>voice(degree(12),0.14,1,"sine",0),90); };
+const sErase=()=>{ if(!AC||muted)return; try{ const now=AC.currentTime,o=AC.createOscillator(),g=AC.createGain(),hp=AC.createBiquadFilter(); o.type="sawtooth"; o.frequency.setValueAtTime(220,now); o.frequency.exponentialRampToValueAtTime(90,now+0.12); hp.type="highpass"; hp.frequency.value=560; g.gain.setValueAtTime(0.05,now); g.gain.exponentialRampToValueAtTime(0.0001,now+0.13); o.connect(hp);hp.connect(g);g.connect(busUI||AC.destination); o.start();o.stop(now+0.15);}catch(e){} };
+const sChord=()=>{ [0,2,4,7].forEach((d,i)=>setTimeout(()=>voice(degree(6+d),1.6,1,"sine",(i-1.5)*0.3),i*70)); };  // the one major bloom, saved for the finale
 
 /* ---- palette + tray ------------------------------------------------ */
 const PAL=["#2b2822","#e0553f","#e6a33f","#5bb26b","#4a86c4","#8a5bc0"];
@@ -94,12 +141,16 @@ function layoutTray(){
 /* ---- the world ----------------------------------------------------- */
 let strokes=[];               // retained-mode marks; each may be alive
 let fx=[];                    // particles / reaction icons
+let foods=[];                 // crumbs (Update 1): flat objects, no sprites
+const GROW_MAX=1.6, MAXPOP=40;
+let breedCd=0;
 let nextId=1;
 let pointer={x:innerWidth/2,y:innerHeight/2,px:0,py:0,down:false,type:"mouse",vx:0,vy:0,speed:0};
 let drawing=null;             // current stroke buffer
 let grabbed=null;             // creature being flung
 let baseDirty=true;
 let page=0, corner=null;      // sketchbook (Update 2): current page + dog-ear peel state
+let muteTimer=null;           // long-press-the-tray to mute
 
 /* view transform (for the zoom-out reveal) */
 let view={s:1,ox:0,oy:0,ts:1,tox:0,toy:0};
@@ -118,8 +169,8 @@ function extendStroke(x,y){
 function widthAt(sp){ return clamp(13 - sp*6, 3, 14); }   // slow=fat, fast=thin, wider range
 function endStroke(){
   if(!drawing)return; const raw=drawing.raw;
-  if(raw.length<6){ // a tap, not a stroke -> seed a tiny dot creature at the point
-    seedDot(raw[0],raw[1]); drawing=null; return;
+  if(raw.length<6){ // a tap, not a stroke -> drop a crumb (it sprouts into a creature if left)
+    dropCrumb(raw[0],raw[1]); drawing=null; return;
   }
   const s=makeStroke(resample(raw,3), drawing.color, 0);
   strokes.push(s); L.drawn++; sesDrawn++; grow(1.0); comeAlive(s, strokes.length===1||L.drawn<=1?true:undefined);
@@ -165,13 +216,22 @@ function makeStroke(pts,col,author,id){
 
 /* ---- give a stroke a soul (eyes) ----------------------------------- */
 function comeAlive(s,hero){
-  s.alive=true; s.settled=false; s.soul={ state:"idle", blink:rnd(2,5), mood:0, wob:rnd(0,TAU), breathe:rnd(0,TAU),
-    eyes:eyePlaces(s), pupils:[{x:0,y:0,vx:0,vy:0},{x:0,y:0,vx:0,vy:0}], flee:0, spared:false, tmr:0, temper:temperFor(s.color) };
+  s.alive=true; s.settled=false; if(s.grow===undefined) s.grow=1;
+  const temper=temperFor(s.color);
+  s.soul={ state:"idle", blink:rnd(2,5), mood:0, wob:rnd(0,TAU), breathe:rnd(0,TAU),
+    eyes:eyePlaces(s), pupils:[{x:0,y:0,vx:0,vy:0},{x:0,y:0,vx:0,vy:0}], flee:0, spared:false, tmr:0, temper,
+    hunger:0, content:0.3, fed:0, refractory:0, nuzT:0, partner:null, gaze:null, gazeT:0,
+    pitch:clamp(8+pitchOffset(temper)+Math.round((70-Math.min(s.bb.w,s.bb.h))/14),0,SCALE.length-1),
+    pan:clamp((s.x/W)*2-1,-0.9,0.9) };
   s.floor=jarFloor();
   if(hero){ s.hero=true; s.vy=-3; s.sq=.5; } // first breath: guaranteed adorable
-  sBorn(); reactAt(s,"born");
+  sBorn(s); reactAt(s,"born");
 }
-function temperFor(c){ if(c==="#e0553f")return "hot"; if(c==="#4a86c4")return "sleepy"; if(c==="#5bb26b")return "social"; if(c==="#e6a33f")return "bouncy"; return "plain"; }
+function ew(s){ return s.bb.w*(s.grow||1); }   // effective size (food growth)
+function eh(s){ return s.bb.h*(s.grow||1); }
+function hueOf(hex){ const n=parseInt(hex.slice(1),16); let r=(n>>16&255)/255,g=(n>>8&255)/255,b=(n&255)/255; const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn; if(d<0.08) return -1; let h; if(mx===r)h=((g-b)/d)%6; else if(mx===g)h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; return h; }
+function temperFor(c){ const h=hueOf(c); if(h<0) return "plain"; const anchors=[["hot",8],["bouncy",42],["social",135],["sleepy",215]]; let best="plain",bd=999; for(const [t,ah] of anchors){ let dd=Math.abs(h-ah); dd=Math.min(dd,360-dd); if(dd<bd){bd=dd;best=t;} } return best; }
+function blendHex(a,b){ const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16); const r=((pa>>16&255)+(pb>>16&255))>>1,g=((pa>>8&255)+(pb>>8&255))>>1,bl=((pa&255)+(pb&255))>>1; return "#"+((1<<24)+(r<<16)+(g<<8)+bl).toString(16).slice(1); }
 function eyePlaces(s){
   const cx=(s.bb.w)/2, top=s.bb.h*0.3; const r=clamp(Math.min(s.bb.w,s.bb.h)*0.18,4,11);
   if(s.kind==="dot") return [{ox:s.bb.w/2,oy:s.bb.h/2,r:clamp(s.bb.w*0.5,5,10)}];
@@ -179,7 +239,58 @@ function eyePlaces(s){
   return [{ox:cx-r*1.4,oy:top,r},{ox:cx+r*1.4,oy:top,r}];
 }
 function jarFloor(){ return H-70; }
-function seedDot(x,y){ const pts=new Float32Array([x-4,y,6, x,y,7, x+4,y,6]); const s=makeStroke(pts,color,1); s.id=nextId++; strokes.push(s); comeAlive(s); grow(.3); }
+function seedDot(x,y){ const pts=new Float32Array([x-4,y,6, x,y,7, x+4,y,6]); const s=makeStroke(pts,color,1); strokes.push(s); comeAlive(s); grow(.3); reactAt(s,"spark"); }
+/* ---- food (Update 1): tap = crumb; uneaten crumbs sprout into creatures */
+function dropCrumb(x,y){
+  for(const f of foods){ if(dist(x,y,f.x,f.y)<26){ f.amt++; f.r=clamp(f.r+2.2,5,15); tone(560,.05,.04,"sine"); return; } }  // tap near a crumb -> a bigger berry
+  foods.push({x, y:Math.min(y,jarFloor()-4), r:6, amt:1, c:pick(["#c9843f","#d1a24a","#b5703a"]), vy:0, age:0});
+  tone(520,.05,.04,"sine");
+}
+function eatFood(s,f){ const i=foods.indexOf(f); if(i<0)return; foods.splice(i,1); const so=s.soul;
+  so.hunger=Math.max(0,so.hunger-0.5); so.content=Math.min(1,so.content+0.25); so.fed++; so.mood=0.9;
+  s.grow=Math.min(GROW_MAX,(s.grow||1)+0.05*f.amt); s.sq=0.5; if(so.state==="seek")so.state="idle"; reactAt(s,"heart"); sEat(s); }
+function foodsTick(dt){
+  const anyLive=strokes.some(s=>s.alive&&!s.pending);
+  for(let i=foods.length-1;i>=0;i--){ const f=foods[i]; f.vy+=0.28*dt*60/60; f.y+=f.vy; const fl=jarFloor()-f.r; if(f.y>fl){f.y=fl;f.vy=0;} f.age+=dt;
+    const sproutAt = anyLive ? (FAST?8:45) : (FAST?2:6);   // fast-sprout when nothing is alive, so the pad is never inert
+    if(f.age>sproutAt){ foods.splice(i,1); seedDot(f.x,f.y-f.r); }
+  }
+}
+/* ---- breeding (Update 1): two content creatures nuzzle -> a baby is drawn
+   into being BETWEEN them (never a mark elsewhere). Capped + refractory. */
+function breedTick(dt){
+  breedCd-=dt;
+  // progress active courtships every frame: partners drift together, hearts rise, then a baby
+  for(const s of strokes){ const so=s.soul; if(!so||so.state!=="nuzzle")continue; const p=so.partner;
+    if(!p||!p.alive||!p.soul||p.soul.state!=="nuzzle"||p.soul.partner!==s||s.dissolve!==undefined||s===grabbed||p===grabbed||(tool==="eraser"&&pointer.down)){
+      so.state="idle"; so.partner=null; so.face=null; if(p&&p.soul){p.soul.state="idle";p.soul.partner=null;p.soul.face=null;} continue; }
+    if(s.id>p.id) continue;   // lead drives, once
+    const acx=s.x+s.bb.w/2, acy=s.y+s.bb.h/2, bcx=p.x+p.bb.w/2, bcy=p.y+p.bb.h/2, mx=(acx+bcx)/2, my=(acy+bcy)/2;
+    s.vx+=Math.sign(mx-acx)*0.14; p.vx+=Math.sign(mx-bcx)*0.14; s.vy+=Math.sign(my-acy)*0.08; p.vy+=Math.sign(my-bcy)*0.08;
+    s.vx*=0.82; p.vx*=0.82; s.vy*=0.82; p.vy*=0.82; s.x+=s.vx; p.x+=p.vx; s.y+=s.vy; p.y+=p.vy;
+    so.nuzT+=dt; p.soul.nuzT+=dt; so.face={x:bcx,y:bcy}; p.soul.face={x:acx,y:acy};
+    if(Math.random()<dt*3){ fx.push({x:mx+rnd(-6,6),y:my-6,vx:rnd(-.3,.3),vy:rnd(-1.1,-.6),life:1.3,g:.01,txt:"♥",c:"#dd6b8a",sz:15}); sNuzzle(s,p); }
+    if(so.nuzT>(FAST?0.8:2.0)) birth(s,p,mx,my);   // the drift keeps pulling them together; baby appears at the live midpoint
+  }
+  if(breedCd>0) return;
+  breedCd=0.3;   // throttle the O(n^2) pair search
+  const alive=strokes.filter(x=>x.alive&&!x.pending); if(alive.length>=MAXPOP) return;
+  const cand=alive.filter(s=>s.dissolve===undefined&&s.soul&&(s.soul.state==="idle"||s.soul.state==="curious")&&s.soul.content>0.5&&s.soul.hunger<0.4&&s.soul.refractory<=0&&s!==grabbed&&!s.bait);
+  let pair=null,pd=1e9;
+  for(let i=0;i<cand.length;i++) for(let j=i+1;j<cand.length;j++){ const d=dist(cand[i].x,cand[i].y,cand[j].x,cand[j].y); if(d<pd){pd=d;pair=[cand[i],cand[j]];} }
+  if(pair && pd<320){ const [a,c]=pair; a.soul.state=c.soul.state="nuzzle"; a.soul.partner=c; c.soul.partner=a; a.soul.nuzT=c.soul.nuzT=0; breedCd=FAST?3:18; }
+}
+function birth(a,b,mx,my){
+  a.soul.state="idle"; b.soul.state="idle"; a.soul.partner=b.soul.partner=null; a.soul.face=b.soul.face=null;
+  a.soul.content=b.soul.content=0.4; a.soul.refractory=b.soul.refractory=(FAST?4:25);
+  if(strokes.filter(s=>s.alive).length>=MAXPOP){ reactAt(a,"heart"); return; }   // at cap: cozy, no baby
+  const col=blendHex(a.color,b.color);
+  const baby=makeStroke(warpShape(pick([a,b]).pts,mx,my), col, 1);
+  baby.growT=0; baby.settled=false; baby.alive=false; baby.pending=true; baby.baby=true; baby.grow=0.45; baby.gen=Math.max(a.gen||0,b.gen||0)+1;
+  strokes.push(baby); L.gen=Math.max(L.gen||0,baby.gen); L.loved=(L.loved||0)+1; saveLedger();
+  for(let i=0;i<5;i++)fx.push({x:mx+rnd(-8,8),y:my,vx:rnd(-.5,.5),vy:rnd(-1.4,-.6),life:1.4,g:.02,txt:pick(["♥","✦"]),c:"#dd6b8a",sz:16});
+  sBorn();
+}
 
 /* ---- reaction FX (wordless) ---------------------------------------- */
 function reactAt(s,kind){
@@ -331,7 +442,7 @@ function doMerge(){ if(ending)return; ending="merge"; director.mergeT=0; if(dire
   for(const s of alive){ if(s.soul){ s.soul.state="merge"; s.soul.slot=i/n*TAU; i++; } }
   view.ts=RM?0.7:0.5; view.tox=W*0.5-(W*0.5)*view.ts; view.toy=H*0.5-(H*0.5)*view.ts;  // re-approach for the tableau
 }
-function doErase(waved){ if(ending)return; ending="erase";
+function doErase(waved){ if(ending)return; ending="erase"; foods.length=0;
   // real, consensual: clear EVERYTHING the game kept — snapshot keys first (removing while iterating skips keys)
   wiped=true;
   try{ const keys=Object.keys(localStorage).filter(k=>k.indexOf("doodle.")===0 && k!=="doodle.scar"); for(const k of keys) localStorage.removeItem(k); }catch(e){}
@@ -383,6 +494,14 @@ function step(dt){
       if(stage>=2 && tool==="eraser" && pointer.down){ const d=dist(pointer.x,pointer.y,cx,cy);
         if(d<150){ so.state="flee"; so.flee=1; const a=Math.atan2(cy-pointer.y,cx-pointer.x); s.vx+=Math.cos(a)*0.9; s.vy+=Math.sin(a)*0.6-0.2; if(Math.random()<0.02)reactAt(s,"ex"); }
       } else if(so.state==="flee" && so.flee>0){ so.flee-=dt; if(so.flee<=0){ so.state="idle"; } }
+      // hunger & feeding — very gentle; neglect means naps, never death
+      if(so.state==="idle"||so.state==="curious"||so.state==="seek"){
+        so.hunger=Math.min(1,so.hunger+dt*0.012*(FAST?12:1));
+        if(so.hunger>0.35 && foods.length){ let f=null,fd=1e9; for(const ff of foods){ const d=dist(cx,cy,ff.x,ff.y); if(d<300&&d<fd){fd=d;f=ff;} }
+          if(f){ so.state="seek"; s.vx+=Math.sign(f.x-cx)*(so.temper==="hot"?0.16:0.1); if(f.y<cy-6)s.vy-=0.1; if(fd<ew(s)*0.5+f.r+8) eatFood(s,f); }
+          else if(so.state==="seek") so.state="idle";
+        } else if(so.state==="seek") so.state="idle";
+      }
       // merge finale: ease into a ring slot around your mark (world coords through the zoom-out)
       if(so.state==="merge"){
         const pwx=(pointer.x-view.ox)/view.s, pwy=(pointer.y-view.oy)/view.s, rr=90/view.s;
@@ -400,37 +519,39 @@ function step(dt){
       if(so.temper==="bouncy" && Math.abs(s.vy)<0.4 && Math.random()<0.02){ s.vy=-3.4; sHop(s); }
       if(so.temper==="hot" && Math.random()<0.03){ s.vx+=rnd(-1.2,1.2); }   // restless darts
       s.vx*=0.96; s.x+=s.vx; s.y+=s.vy;
-      // floor bounce
-      const fl=jarFloor()-s.bb.h*0.5;
+      // floor bounce (effective size, so grown creatures rest on the floor)
+      const fl=jarFloor()-eh(s)*0.5;
       if(s.y> fl){ if(s.vy>3 && !RM) reactAt(s,"dust"); s.y=fl; if(s.vy>1.2){ s.sq=Math.min(1,s.vy*0.08); sHop(s); } s.vy*=-0.42; s.vx*=0.86; }
       // walls
-      if(s.x<6){s.x=6;s.vx=Math.abs(s.vx)*0.5;} if(s.x>W-s.bb.w-6){s.x=W-s.bb.w-6;s.vx=-Math.abs(s.vx)*0.5;}
+      if(s.x<6){s.x=6;s.vx=Math.abs(s.vx)*0.5;} if(s.x>W-ew(s)-6){s.x=W-ew(s)-6;s.vx=-Math.abs(s.vx)*0.5;}
       if(s.y<40){s.y=40;s.vy=Math.abs(s.vy)*0.4;}
     }
     // soul animation
     so.wob+=dt*(RM?1.2:2.4); so.breathe+=dt*1.6; so.blink-=dt; if(so.blink<-0.12)so.blink=rnd(2.5,6);
     so.mood=lerp(so.mood,0,dt*2);   // moods ease back to neutral
+    if(so.refractory>0) so.refractory-=dt;
     s.sq*=0.86;
     if(s.dizzy>0){ s.dizzy-=dt; s.rot+=0.5; } else if(s.rot){ s.rot*=0.85; if(Math.abs(s.rot)<0.01)s.rot=0; }
     // pupils spring to cursor, shoved by body accel
     let gx=pointer.x, gy=pointer.y;
     if(pointer.type==="touch" && !pointer.down){ if(!so.gaze||so.gazeT<T){ so.gaze={x:rnd(40,W-40),y:rnd(60,H-100)}; so.gazeT=T+rnd(2,5); } gx=so.gaze.x; gy=so.gaze.y; }  // no hover on touch: gentle wander gaze
     if(so.state==="merge" && director.giant){ gx=director.giant.x; gy=director.giant.y; }  // at the merge, all eyes turn outward
+    if(so.state==="nuzzle" && so.face){ gx=so.face.x; gy=so.face.y; }                       // courting: eyes on partner
     for(let e=0;e<so.eyes.length;e++){ const p=so.pupils[e]; const eye=so.eyes[e];
       const ex=s.x+eye.ox, ey=s.y+eye.oy; let tx=(gx-ex), ty=(gy-ey); const el=Math.hypot(tx,ty)||1; const mr=eye.r*0.45;
       tx=tx/el*mr - s.vx*0.6; ty=ty/el*mr - s.vy*0.6;
       p.vx+=(tx-p.x)*0.2; p.vy+=(ty-p.y)*0.2; p.vx*=0.7; p.vy*=0.7; p.x+=p.vx; p.y+=p.vy;
     }
     // idle -> sleep zzz (perf + life); sleepy naps sooner, hot resists
-    if(so.state==="idle" && Math.abs(s.vx)<0.15 && Math.abs(s.y-(jarFloor()-s.bb.h*0.5))<3){ so.tmr+=dt;
+    if(so.state==="idle" && so.content<0.55 && Math.abs(s.vx)<0.15 && Math.abs(s.y-(jarFloor()-eh(s)*0.5))<4){ so.tmr+=dt;
       const nap = so.temper==="sleepy"?(FAST?2:5) : so.temper==="hot"?(FAST?7:18) : (FAST?4:10);
-      if(so.tmr>nap){ so.state="sleep"; reactAt(s,"z"); } } else so.tmr=0;
+      if(so.tmr>nap){ so.state="sleep"; reactAt(s,"z"); } } else so.tmr=0;   // content creatures stay lively (they'll court)
     if(so.state==="sleep" && (pointer.speed>4 && dist(pointer.x,pointer.y,cx,cy)<120)){ so.state="idle"; so.tmr=0; }
   }
   // gentle separation so creatures spread out instead of piling into a column
   const aw=[]; for(const s of strokes){ if(s.alive&&s.soul&&s.soul.state!=="sleep"&&s.soul.state!=="merge"&&s.soul.state!=="nuzzle"&&s!==grabbed&&s.dissolve===undefined&&!s.pending) aw.push(s); }
-  for(let i=0;i<aw.length;i++){ const a=aw[i], ax=a.x+a.bb.w/2, ay=a.y+a.bb.h/2, ar=Math.max(a.bb.w,a.bb.h)*0.4+7;
-    for(let j=i+1;j<aw.length;j++){ const b=aw[j], bx=b.x+b.bb.w/2, by=b.y+b.bb.h/2, br=Math.max(b.bb.w,b.bb.h)*0.4+7;
+  for(let i=0;i<aw.length;i++){ const a=aw[i], ax=a.x+a.bb.w/2, ay=a.y+a.bb.h/2, ar=Math.max(ew(a),eh(a))*0.4+7;
+    for(let j=i+1;j<aw.length;j++){ const b=aw[j], bx=b.x+b.bb.w/2, by=b.y+b.bb.h/2, br=Math.max(ew(b),eh(b))*0.4+7;
       let dx=ax-bx, dy=ay-by, d=Math.hypot(dx,dy)||0.01, min=ar+br;
       if(d<min){ const push=(min-d)/min*0.5; dx/=d; dy/=d; a.vx+=dx*push; a.vy+=dy*push*0.5; b.vx-=dx*push; b.vy-=dy*push*0.5; } } }
   // merge finale: creatures gather warmly to your mark, hearts rise
@@ -440,6 +561,8 @@ function step(dt){
   if(fx.length>200)fx.splice(0,fx.length-200);
   // bait blob early self-demo (stage1): a resting critter toddles to cursor
   baitTick(dt);
+  foodsTick(dt);
+  breedTick(dt);
   // finale ending detection
   finaleDetect(dt);
   if(fxMsgTimer>0)fxMsgTimer-=dt;
@@ -487,9 +610,10 @@ function render(){
   ctx.translate(view.ox,view.oy); ctx.scale(view.s,view.s);
   // the pad's own sheet (so the zoom-out shows it as one small sheet)
   if(view.s<0.98){ ctx.fillStyle=THEME.paper; ctx.strokeStyle=THEME.edge; ctx.lineWidth=2/view.s; roundRect(0,0,W,H,10); ctx.fill(); ctx.stroke(); }
-  // strokes
+  // crumbs (behind creatures), then strokes
+  for(const f of foods){ ctx.fillStyle=f.c; ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,TAU); ctx.fill();
+    if(f.amt>1){ ctx.fillStyle=shade(f.c,0.3); ctx.beginPath(); ctx.arc(f.x-f.r*0.3,f.y-f.r*0.3,f.r*0.35,0,TAU); ctx.fill(); } }
   for(const s of strokes) drawStroke(s);
-  // erased-ghost handled inline
   ctx.restore();
   // giant cursor (inversion) — a soft bob so it reads curious/alive
   if(director.giant){ const gi=director.giant; drawGiantCursor(gi.x, gi.y + ((!RM&&gi.bob)?Math.sin(gi.bob*1.1)*3:0)); }
@@ -580,8 +704,9 @@ function drawSelfMark(x,y){ // your cursor, now a mark among them: shadow + tiny
   ctx.restore();
 }
 function drawTray(){
+  if(trayFlash>0) trayFlash-=0.03;                                  // mute-toggle confirm flash
   const trayA=clamp((view.s-0.55)/0.45,0,1); if(trayA<=0) return;   // fade out as the pad recedes
-  ctx.save(); ctx.globalAlpha=trayA;
+  ctx.save(); ctx.globalAlpha=trayA*(trayFlash>0?0.5:1);
   for(const d of tray.dots){ ctx.fillStyle=d.c; ctx.beginPath(); ctx.arc(d.x,d.y,d.r*(d.c===color&&tool==="pen"?1.35:1),0,TAU); ctx.fill();
     if(d.c===color&&tool==="pen"){ ctx.strokeStyle=THEME.ink; ctx.lineWidth=1.5; ctx.stroke(); } }
   const e=tray.eraser; ctx.fillStyle="#e4b8c4"; roundRect(e.x-14,e.y-10,28,20,7); ctx.fill();
@@ -604,6 +729,8 @@ cv.addEventListener("pointerdown",e=>{ unlock(); cv.setPointerCapture(e.pointerI
   sinceInput=0; lull=false;
   // finale: the pad is drawn; you can pick up the offered eraser (consent), or do nothing.
   if(stage>=6 && director.offered){ if(director.finale && dist(p.x,p.y,director.finale.eraser.x,director.finale.eraser.y)<48){ director.consent=true; } return; }
+  // mute: long-press anywhere along the tray row (invisible; a soft note + tray flash confirms)
+  if(p.y>H-64 && p.x<tray.eraser.x+40){ if(muteTimer)clearTimeout(muteTimer); muteTimer=setTimeout(toggleMute,600); }
   // tray hit?
   if(hitTray(p.x,p.y)){ return; }
   // dog-ear undo
@@ -615,6 +742,7 @@ cv.addEventListener("pointerdown",e=>{ unlock(); cv.setPointerCapture(e.pointerI
   beginStroke(p.x,p.y);
 });
 addEventListener("pointermove",e=>{ const p=pos(e); pointer.x=p.x;pointer.y=p.y;pointer.pressure=e.pressure;
+  if(muteTimer){ clearTimeout(muteTimer); muteTimer=null; }   // moving cancels the mute long-press
   if(!pointer.down) return;
   if(stage>=6 && director.offered) return; // finale: no drawing; your cursor is just a mark now
   if(grabbed){ const nx=p.x-grabbed.grabX, ny=p.y-grabbed.grabY; grabbed.vx=(nx-grabbed.x)*0.6; grabbed.vy=(ny-grabbed.y)*0.6; grabbed.x=nx; grabbed.y=ny; return; }
@@ -622,6 +750,7 @@ addEventListener("pointermove",e=>{ const p=pos(e); pointer.x=p.x;pointer.y=p.y;
   if(drawing){ if(getCo) for(const ev of getCo.call(e)){ extendStroke(ev.clientX,ev.clientY); } else extendStroke(p.x,p.y); }
 });
 addEventListener("pointerup",e=>{ pointer.down=false; director.consent=false; director.holdT=0; director.holdMoved=0;
+  if(muteTimer){ clearTimeout(muteTimer); muteTimer=null; }
   if(grabbed){ const sp=Math.hypot(grabbed.vx,grabbed.vy);
     if(sp>10){ if(grabbed.soul){grabbed.soul.state="idle"; reactAt(grabbed,"ex"); grabbed.dizzy=1;} }        // flung -> dizzy
     else if(grabbed.soul){ grabbed.sq=0.5; grabbed.vy=-2.6; grabbed.soul.mood=0.8; grabbed.soul.state="idle"; reactAt(grabbed,pick(["spark","note","heart"])); sPoke(); } // tapped -> startled giggle
@@ -639,9 +768,9 @@ function hitTray(x,y){
   const e=tray.eraser; if(dist(x,y,e.x,e.y)<20){ tool="eraser"; tone(240,.05,.04,"sine"); return true; }
   return false;
 }
-function creatureAt(x,y){ let best=null,bd=1e9; for(const s of strokes){ if(!s.alive||s.pending)continue; const cx=s.x+s.bb.w/2,cy=s.y+s.bb.h/2; const r=Math.max(24,Math.max(s.bb.w,s.bb.h)*0.6); const d=dist(x,y,cx,cy); if(d<r&&d<bd){bd=d;best=s;} } return best; }
+function creatureAt(x,y){ let best=null,bd=1e9; for(const s of strokes){ if(!s.alive||s.pending)continue; const cx=s.x+s.bb.w/2,cy=s.y+s.bb.h/2; const r=Math.max(24,Math.max(ew(s),eh(s))*0.6); const d=dist(x,y,cx,cy); if(d<r&&d<bd){bd=d;best=s;} } return best; }
 function eraseAt(x,y){
-  for(let i=strokes.length-1;i>=0;i--){ const s=strokes[i]; const cx=s.x+s.bb.w/2,cy=s.y+s.bb.h/2; const r=Math.max(20,Math.max(s.bb.w,s.bb.h)*0.5);
+  for(let i=strokes.length-1;i>=0;i--){ const s=strokes[i]; const cx=s.x+s.bb.w/2,cy=s.y+s.bb.h/2; const r=Math.max(20,Math.max(ew(s),eh(s))*0.5);
     if(dist(x,y,cx,cy)<r){
       if(s.alive && s.soul && s.soul.state==="flee"){ L.erasedAlive++; } // only fleeing-alive counts
       reactAt(s,"dust"); sErase(); strokes.splice(i,1); saveLedger(); return;
@@ -661,7 +790,9 @@ function loop(now){ let dt=(now-last)/1000; last=now; dt=Math.min(dt,0.05);
 document.addEventListener("visibilitychange",()=>{ running=!document.hidden; last=performance.now(); if(!document.hidden) saveLedger(); });
 
 /* ---- boot ---------------------------------------------------------- */
-if(FAST){ window.__dbg=()=>({n:strokes.length, alive:strokes.filter(s=>s.alive).length, pending:strokes.filter(s=>s.pending).length, stage, agency:+agency.toFixed(2), drawn:L.drawn, undrew:L.undrew, erasedAlive:L.erasedAlive, tool, color, ending, view:+view.s.toFixed(2), offered:director.offered, consent:director.consent, ex:director.finale?Math.round(director.finale.eraser.x):0, ey:director.finale?Math.round(director.finale.eraser.y):0}); }
+if(FAST){ window.__dbg=()=>({n:strokes.length, alive:strokes.filter(s=>s.alive).length, pending:strokes.filter(s=>s.pending).length, foods:foods.length, nuzzling:strokes.filter(s=>s.soul&&s.soul.state==="nuzzle").length, seeking:strokes.filter(s=>s.soul&&s.soul.state==="seek").length, babies:strokes.filter(s=>s.baby).length, fed:strokes.reduce((a,s)=>a+(s.soul?s.soul.fed:0),0), content:+(strokes.filter(s=>s.soul).reduce((a,s)=>a+s.soul.content,0)/Math.max(1,strokes.filter(s=>s.soul).length)).toFixed(2), gen:L.gen||0, loved:L.loved||0, muted, audio:!!AC,
+  nuzT:(()=>{const s=strokes.find(x=>x.soul&&x.soul.state==="nuzzle"&&x.soul.partner&&x.id<x.soul.partner.id);if(!s)return -1;const p=s.soul.partner;return {t:+s.soul.nuzT.toFixed(2),d:Math.round(dist(s.x+s.bb.w/2,s.y+s.bb.h/2,p.x+p.bb.w/2,p.y+p.bb.h/2))};})(), stage, drawn:L.drawn, undrew:L.undrew, erasedAlive:L.erasedAlive, tool, color, ending, view:+view.s.toFixed(2), offered:director.offered, consent:director.consent, ex:director.finale?Math.round(director.finale.eraser.x):0, ey:director.finale?Math.round(director.finale.eraser.y):0}); }
+if(FAST){ window.__feed=()=>{ strokes.filter(s=>s.alive&&s.soul).forEach(s=>{ s.soul.content=0.8; s.soul.hunger=0; s.soul.refractory=0; if(s.soul.state==="sleep")s.soul.state="idle"; }); }; }
 function boot(){ resize(); drawFavicon(); requestAnimationFrame(loop); saveLedger(); }
 function drawFavicon(){ try{const c=document.createElement("canvas");c.width=c.height=32;const x=c.getContext("2d");
   x.fillStyle=css("--paper");x.fillRect(0,0,32,32); x.fillStyle=css("--ink"); x.beginPath();x.moveTo(8,26);x.lineTo(20,6);x.lineTo(26,10);x.closePath();x.fill();
