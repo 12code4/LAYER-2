@@ -1,114 +1,110 @@
 # Doodle Pad — design notes
 
-> A pad for drawing. Whatever you draw is alive. After a while, it draws back.
-> Pointer only. No text. No hints. (Internal codename: NULLPAD.)
+> A little pad for drawing. Whatever you draw is alive.
+> Pointer only — no keyboard, ever. It looks like a fidget toy. It is Duck Amuck.
 
-For readers of the source, not players. Players get none of this — that's the point.
+For readers of the source, not players. **Players get none of this.** No text, no hints, no
+warnings appear in the game itself; you find everything by pulling at it.
+
+This game was designed by a multi-agent workflow (five design lenses → synthesis → adversarial
+critique) and then hand-authored and verified in a headless browser. The spec's internal codename
+was **NULLPAD**.
 
 ---
 
-## 0. The brief this answers
+## 0. The brief it answers
 
-Third game in the repo. The user's direction across three tries narrowed hard:
-**"go crazier, wackier — more freedom, more input"** and then, twice,
-**"don't make it a typing game."** So the whole input surface is the pointer, and the
-verb is *drawing* — the highest-freedom, most universally legible non-keyboard input there is.
-It still obeys the standing brief from the research corpus (`docs/research/notes` in
-`12code4/layers`): **hide the hand entirely, no hints, the player pulls at the seams.**
+Third in a series of hidden-hand metafictions built from the LAYERS research corpus
+(`docs/research/notes` in the sibling `12code4/layers` repo). The first two — **CARET** and a
+scrapped sandbox — were typing games; the user asked for something **crazier, with more freedom
+and more input, and no typing at all.** So Doodle Pad is:
 
-It descends most directly from **Duck Amuck** (Chuck Jones, 1953) — the one ancestor in the
-research where an unseen animator torments a *drawn* character, then is revealed as another
-character (A1 §1). Doodle Pad inverts it: **you** are the animator, the drawing gets a say,
-and in the end the hand that draws is revealed to be drawn too.
+- **Pointer only.** Draw, grab & fling, poke, seed, pick a color, erase (a *selected tool*), undo
+  (the dog-ear). No keyboard is an input anywhere.
+- **Maximum freedom & input.** You can draw literally anything, and *every* stroke becomes a
+  creature — so freedom of expression is the mechanic, not a feature.
+- **Hidden hand, no hints.** It presents as a sincere doodle toy. The turn is discovered, never
+  announced.
 
-## 1. How it was built (multi-agent, then hand-authored)
+## 1. Duck Amuck, inverted (the research spine)
 
-Design came from a **Workflow**: five parallel design lenses (wacky mechanics, hidden-hand
-escalation, pointer-input, tech feasibility, novelty/tone) → a synthesized build spec → an
-adversarial critique. The critique caught five real problems *before* a line was written; all
-five are baked in (below). I authored the game from that spec. A second review workflow was
-attempted but blocked by an environment permission bug in the subagents, so the code review was
-done by hand + headless-browser testing (Playwright driving the pointer through the whole arc).
+Duck Amuck (Chuck Jones, 1953) is the one ancestor in the research where an unseen animator
+torments a *drawn* character, ablating its world one channel at a time, then is revealed to be
+another character. Doodle Pad hands the player the animator's role — you draw, you erase, you fling
+— and then slowly **gives the drawings a say**, and finally turns the frame around: *you* are a
+mark on a larger pad, and another hand is drawing *you*. Metalepsis (A1), enacted, never cited (B4).
 
-## 2. The sincere toy first (the DDLC / "earn the love" rule)
+## 2. The toy first (the DDLC / juice rule)
 
-- **Papers:** A1 §6.4, A3 §5.1, B5 §1.5–1.6; spec WOW #1–3.
-- Draw freehand → every stroke becomes a googly-eyed creature: velocity→width ink ribbon
-  (capsule-stamped, round caps), spring-lag pupils that overshoot when the body accelerates,
-  idle breathe/wobble, drop shadow, squash/stretch, gravity + floor bounce, hop, and
-  **ducklings** (they conga after the cursor). Colour silently drives temperament
-  (red hot, blue sleepy, green social, yellow bouncy) — inferred, never stated. It has to be a
-  genuinely fun fidget toy before anything turns, or the ending costs nothing.
+- **Papers:** A1 §6.4, A3 §5.1, B2 beat 1, B5 §1.6.
+- Every finished stroke is baked to a sprite, classified (blob / worm / dot / fuzz) and given a
+  **soul**: googly eyes with spring-lag pupils that overshoot when the body accelerates, idle
+  wobble + breathing, a drop shadow, squash/stretch, gravity + floor bounce, hop locomotion,
+  ducklings (they follow the cursor), and a wordless reaction-FX kit (hearts, `!`, `?`, `zzz`,
+  dust). **Hue silently drives temperament** (red hot, blue sleepy, green social, yellow bouncy) —
+  a rule the player *infers*, which secretly plants "these have inner states."
+- **First-breath is guaranteed** (critique fix #3): the first stroke always gets the full adorable
+  treatment regardless of geometry, so the gasp is never wasted. A resting **bait** doodle
+  demonstrates aliveness on load with zero text (critique fix #4).
 
-## 3. The five critique fixes (baked in)
+## 3. The pointer verb set (no typing)
 
-1. **Erase is a selected tool, not a gesture** — tap the kneaded-eraser in the tray. This kills
-   the "frantic scribble vs. scrub-erase" collision and the "sleep-hold vs. erase-hold" collision
-   the critique found, and makes erasing *deliberate*.
-2. **Erasing settled ink is neutral; only rubbing out an *alive, fleeing* creature counts**
-   (`erasedAlive`). Correcting a doodle must never be branded cruelty (the critique's sharpest
-   ethics catch). Accountability needs a genuinely optional cruel act.
-3. **The first stroke always gets the full "First Breath"** (guaranteed eyes/blink/hop),
-   regardless of geometry — the universal gasp is never wasted on a stroke that classifies as a
-   dot that skitters off.
-4. **Self-demonstrating fun early** — a resting "bait" doodle toddles toward the cursor so a
-   hesitating player sees aliveness with zero text; ducklings/separation make a society emerge.
-5. **No tells in the opening minutes** — no title/favicon change, no frame-breaks, no cursor
-   drift early; the *first* unprompted mark the pad makes is a **drawn heart** (sweet disarms the
-   pre-braced player far better than a scare). Reveal choreographed tender, not menacing.
+- **Papers:** B1 (teach in seconds, cliché-as-tutorial), input-lens of the design workflow.
+- Draw = drag on empty; **grab & fling** = drag on a creature (dizzy spiral recovery); **poke** =
+  tap a creature; **seed** = tap empty; **color / eraser** = tap the spilled tray (eraser is a
+  *selected tool*, not a gesture — critique fix #1, which also removes the sleep-vs-erase
+  collision); **undo** = tap the dog-ear. Everything has a single-pointer path; nothing needs a
+  keyboard, hover, or right-click. Hit areas are radius-padded (≥~24–44px).
 
-## 4. The turn (Duck Amuck, inverted) — enacted, never narrated
+## 4. The escalation (agency scalar + persisted ledger; no hints)
 
-One `agency` scalar + a persisted ledger (`localStorage doodle.v1`) drive stages, gated by
-**player action + soft time floors** so a frantic scribbler and a careful drawer both hit each
-beat (B2/B3). No on-screen text at any point — every message is made of bodies, eyes, and marks.
+- **Papers:** A2 (refusal/normalization), A5 (DARVO, but tender), B3 (loop/relation), B2 (subtle
+  hint → unambiguous confirmation). Ledger persists in `localStorage` `doodle.v1`.
+- **1 Toy** → **2 Will**: bring the eraser near a creature and it flees, corners, covers its eyes;
+  spare it and it follows you like a puppy. Only erasing an **alive, fleeing** creature counts as
+  cruelty (`erasedAlive`) — correcting a settled doodle is neutral (critique fix #2, the sharpest
+  ethics bug). **3 The pad draws back**: on an idle lull, a stroke lays *itself* in, point by point,
+  in your palette (`genPadStroke`), then becomes a creature; the first unprompted mark is a *heart*
+  above a critter — sweet, which disarms the pre-braced player far better than a scare (critique
+  fix #5). **4 The mimic**: a creature copies your last shape, slightly wrong. **5 The other hand**:
+  a second, heavier cursor draws on your side and gently ablates channels (desaturate / "tidies"
+  your wobble) — always restored within seconds, never a fake crash. **6 The inversion**: the camera
+  pulls back to reveal your pad is one small sheet among thousands on a vast pad, a giant pencil
+  paused above; your cursor gains a shadow and eyes — you are a mark now — and flinches from the big
+  eraser exactly as the creatures did in stage 2. All triggers are **action + soft time floor**, so
+  both the frantic scribbler and the careful drawer reach every beat.
 
-1. **Toy.**
-2. **Will** — bring the (selected) eraser near a creature and it flees intelligently; spare one
-   and it follows you like a puppy. (A5 accountability; B4 refusal.)
-3. **The pad draws back** — on an idle *lull*, a stroke lays itself down point-by-point at
-   hand cadence, in *your* palette, then comes alive. "Did I draw that?"
-4. **The mimic** — a creature watches your last shape and draws it back, slightly wrong. The
-   first *undeniable* "it can draw, and it learned from me."
-5. **The other hand** — a second, heavier cursor appears, redraws, and gently *ablates* channels
-   (desaturates, "tidies" your wobbly lines) — always restored within seconds, never a fake crash.
-6. **The inversion** — the camera pulls back: your whole pad is one small sheet among thousands of
-   faint marks on a vast pad, a giant pencil pausing above it. Your own cursor is now a mark with
-   a shadow and eyes; move to the edge and it flinches from the giant exactly as the creatures
-   flinched from your eraser. (Hofstadter strange loop, B4 §6; Turing inversion, A4 §7.)
+## 5. Endings (pointer only, chosen by action + ledger)
 
-## 5. Endings (pointer only, consensual)
+- **Papers:** A1 T10, A5 §3.6 / impl. 8 (consent transforms it), B3 §4 (escape = relation).
+- **Merge** (gentle default): do nothing near your creatures and they gather to your mark, all eyes
+  turn outward together, hearts rise. Warm, no cost.
+- **Let it go** (the one consensual real cost): the giant hand *sets down* its eraser beside you;
+  pick it up and make a **slow, deliberate 2-second hold-drag** — this genuinely clears the game's
+  own `localStorage` (a scar remains). The creatures give a farewell hop and dissolve; the page goes
+  blank. The consent is gestural and impossible to trigger by accident (verified) — drawing is
+  disabled once you are a mark.
+- **Accountability**: if you rubbed out many fleeing creatures, the merge is never offered and the
+  farewell has no wave — you feel, from the inside, what you taught them.
 
-The giant sets its eraser down beside your mark — an **offer**, not a threat — and you get a real
-window to choose (never sprung on you):
-- **Merge** (gentle default, low cruelty): do nothing; the creatures gather to your mark, all
-  eyes turn outward together, hearts rise. Relation changed from user-of-tool to one-mark-among-many.
-- **Erase** (the one reserved, real, consensual cost — NieR Ending E, A5 §3.6): deliberately
-  *pick up* the offered eraser, then a slow ≥2-second hold-drag. It genuinely clears the game's
-  own `localStorage` (only `doodle.*`), unrecoverable; each creature gives a farewell hop + heart
-  and dissolves; the page goes blank. A scar is left so a later "fresh" pad remembers, faintly.
-- **Accountability** (high `erasedAlive`): merge is never offered; the erase gets no farewell wave.
+## 6. Rails (hidden) & accessibility
 
-**The consent bug I caught in self-review:** the hold-drag erase originally counted *any* held
-drag during the finale, so a player merely drawing could delete everything. Fixed: drawing is
-disabled once you're a mark, and the erase only counts after the offered eraser is actually
-picked up. And merge no longer fires the instant it's offered — there's a window, and it won't
-fire while you're reaching for the eraser.
+- The lie is only about authorship/meaning, never data. Only `doodle.*` localStorage is touched,
+  only via the consensual hold-drag; wrapped in try/catch for private mode. No fake browser/OS
+  crash. **`prefers-reduced-motion`** damps wobble/breath and the camera move; **no strobing, no
+  full-canvas flashes**. DPR capped at 2; awake souls capped at ~36 (rest sleep); creature
+  separation prevents piling. Pointer-only, no keyboard/hover/right-click required.
 
-## 6. Rails (hidden) + accessibility
+## 7. Data & rendering model
 
-- The lie is only about **authorship/meaning**, never data. The only real destruction is the
-  consensual erase of the game's own keys. No fake browser/OS crash, no fake file-delete.
-- `prefers-reduced-motion`: damped wobble/breath, a gentle crossfade-ish zoom, no strobing, no
-  full-canvas flashes.
-- DPR capped at 2; awake-souls capped (~36, others sleep) so it holds framerate; particles capped;
-  `visibilitychange` pauses the loop; `localStorage` wrapped in try/catch (private mode).
-- Pointer-only, one code path for mouse/touch/pen; no keyboard, hover, or right-click ever
-  required; tray hit areas padded; touch uses the finger as the cursor.
+Retained-mode `Stroke` objects (`author` field is invisible to the renderer — the load-bearing
+secret that the pad's marks use your exact tools). Velocity→width ribbon via capsule stamping;
+each alive stroke baked to an offscreen sprite blitted per frame with a transform; faces/FX drawn
+on top; a global view matrix drives the zoom-out; the vast backdrop is one pre-baked texture.
+`window.__dbg()` exposes state under `?fast` (a dev accelerator).
 
-## 7. Files
+## What it deliberately is *not*
 
-- `doodle/index.html` — the whole game (self-contained vanilla JS + canvas, no deps, no network).
-- `doodle/DESIGN.md` — this document.
-
-`?fast` accelerates the arc and exposes `window.__dbg()` — for development and the impatient.
+No typing, no on-screen text, no menus/score/timer/levels, no rich art tools (freedom is in what
+marks *do*, not Photoshop features), no horror (the uncanny comes from tenderness and recognition,
+never menace).
