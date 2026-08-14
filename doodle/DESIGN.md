@@ -103,6 +103,37 @@ each alive stroke baked to an offscreen sprite blitted per frame with a transfor
 on top; a global view matrix drives the zoom-out; the vast backdrop is one pre-baked texture.
 `window.__dbg()` exposes state under `?fast` (a dev accelerator).
 
+## v4.0 — the polish pass + two updates
+
+Planned and adversarially critiqued by a multi-agent workflow (five design lenses → synthesis →
+critique), both grounded in the real code. Shipped as three verified commits.
+
+**v3.5 — polish.** Session-local stage counters (a returning player no longer rushes the turn);
+`makeStroke` id-param (no null-`drawing` crash on hydrate); consensual erase snapshots-then-removes
+*all* `doodle.*` keys; `merge`/`nuzzle` excluded from separation so the finale settles; wired
+blink, breathing, eye-glint, poke-startle, mood-ease; hot/sleepy tempers; landing dust; wider
+smoothed ribbon (pressure folded into the smoothed target); mobile idle wander-gaze; the giant
+pencil bobs and leans toward your mark (curious, not a blade); merge eases creatures into a ring
+and holds the pose; `THEME` color cache.
+
+**v3.8 — Update 1: The Menagerie.** One master audio bus through a limiter (every sound, tray
+included, routed so mute/limiting always apply); one pentatonic scale so a flock never clashes;
+per-creature voice identity from hue+size; a near-silent ambient bed; a generated convolver reverb;
+the eraser kept as the single harsh timbre; 6-voice cap; long-press-the-tray mute (persisted);
+reduced-motion is gentle-but-audible. **Food:** tap = a crumb; creatures get gently hungry, seek and
+eat (grow + content); uneaten crumbs sprout (fast when the page is empty). **Breeding:** two content
+creatures court and a baby is drawn into being between them; blended colours yield emergent
+temperaments (`temperFor` maps by hue); capped + refractory.
+
+**v4.0 — Update 2: The Sketchbook.** Your drawings **persist across sessions** (localStorage —
+synchronous, so the `wiped` guard fully protects it; positions normalized by min-dimension so a
+resized window doesn't distort). Only your marks + your creatures' babies persist — never
+pad-authored mystery marks (which would fabricate the reveal). **Multi-page:** peel the dog-ear to
+turn to a fresh page, quick-tap it to undo, a bottom-left dog-ear flips back; prior pages are kept.
+**Deeper authorship / the returning uncanny:** the pad sometimes *finishes one of your open lines*
+in your own colour (never editing your marks) — Duck Amuck, tender. The consensual erase now clears
+the book too; page-turning is frozen during the inversion.
+
 ## What it deliberately is *not*
 
 No typing, no on-screen text, no menus/score/timer/levels, no rich art tools (freedom is in what

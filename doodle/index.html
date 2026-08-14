@@ -28,7 +28,7 @@
    Pointer only. No text. No instructions. Pull at it.
    Built from a design spec + adversarial critique (see DESIGN in repo).
    ===================================================================== */
-const VERSION="3.8";                                        // polish → 3.5 · menagerie → 3.8 · sketchbook → 4.0
+const VERSION="4.0";                                        // polish → 3.5 · menagerie → 3.8 · sketchbook → 4.0
 const cv=document.getElementById("pad"), ctx=cv.getContext("2d");
 const FAST=/(?:\?|&)fast/.test(location.search);            // dev/impatient accelerator
 const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -69,6 +69,26 @@ let wiped=false;   // once the player consents to erase, the record stays gone
 function saveLedger(){ if(wiped)return; try{ localStorage.setItem(KEY, JSON.stringify(L)); }catch(e){} }
 let scar=null; try{ scar=JSON.parse(localStorage.getItem("doodle.scar")||"null"); }catch(e){}
 let lastSave=0;
+
+/* ---- sketchbook (Update 2): the pad keeps your drawings across sessions.
+   localStorage (synchronous, so the `wiped` guard fully protects it). Only
+   your own marks + your creatures' babies persist — never pad-authored
+   mystery marks (that would fabricate the reveal before it's earned). */
+let book=[];   // pages of serialized strokes; book[page] is stale while that page is live
+function persistable(s){ return !s.pending && s.dissolve===undefined && (s.author===0 || s.baby); }
+function serializeStroke(s){ const p=new Array(s.pts.length); for(let i=0;i<s.pts.length;i++) p[i]=Math.round(s.pts[i]); return {p, c:s.color, k:s.kind, b:s.baby?1:0}; }
+function currentPageData(){ return strokes.filter(persistable).slice(-100).map(serializeStroke); }
+function saveBook(){ if(wiped)return; try{ book[page]=currentPageData(); if(book.length>8) book=book.slice(-8);
+  localStorage.setItem("doodle.book", JSON.stringify({v:1, ref:Math.min(W,H), cur:clamp(page,0,book.length-1), pages:book})); }catch(e){} }
+function hydratePage(arr, ref){ if(!arr) return; const sc=Math.min(W,H)/(ref||Math.min(W,H));   // uniform scale by min-dimension (no aspect distortion)
+  for(const d of arr){ if(!d||!d.p) continue; const pts=new Float32Array(d.p.length); for(let i=0;i<d.p.length;i++) pts[i]=d.p[i]*sc;
+    try{ const s=makeStroke(pts, d.c||"#2b2822", 0, nextId++); s.baby=!!d.b; strokes.push(s); comeAlive(s); s.soul.state="sleep"; }catch(e){} } }
+function loadBook(){ try{ const bk=JSON.parse(localStorage.getItem("doodle.book")||"null"); if(bk&&bk.pages&&bk.pages.length){ book=bk.pages; page=clamp(bk.cur||0,0,book.length-1); hydratePage(book[page], bk.ref); return true; } }catch(e){} return false; }
+function turnPage(dir){ if(stage>=6) return; saveBook();
+  strokes.length=0; foods.length=0; fx.length=0; grabbed=null; drawing=null; bait=null;
+  let np=page+dir; if(np<0)np=0; if(np>=book.length){ book.push([]); np=book.length-1; }
+  page=np; hydratePage(book[page], Math.min(W,H)); corner=null; tone(300,.08,.04,"sine"); saveBook();
+}
 
 /* ---- audio: a small generative voice for a living pad --------------
    One master bus (limiter) so nothing bypasses mute/limiting. Every pitched
@@ -333,6 +353,7 @@ function enterStage(n){ if(stage>=n)return; stage=n; L.stageMax=Math.max(L.stage
 let lastPlayerShape=null;
 function padDrawsBack(minor){
   enterStage(3);
+  if(!minor && Math.random()<0.5 && completeOpen()) return;   // sometimes: finish one of YOUR open lines instead of drawing its own
   const near = strokes.find(s=>s.alive) || {x:W/2,y:H/2,bb:{w:0,h:0}};
   const ax=clamp((near.x||W/2)+rnd(-120,120),60,W-60), ay=clamp((near.y||H/2)+rnd(-60,60),80,jarFloor()-20);
   const pts=genPadStroke(ax,ay, minor?0.6:1);
@@ -356,6 +377,18 @@ function genPadStroke(cx,cy,scale){
   return resample(new Float32Array(out),3);
 }
 function vp(a,i){ i=clamp(i,0,a.length/2-1); return [a[i*2],a[i*2+1]]; }
+/* the pad quietly finishes one of your open lines — never editing your marks,
+   only adding a stroke that closes the loop in your own colour (Duck-Amuck, tender) */
+function completeOpen(){
+  const open=strokes.filter(s=>s.alive && s.author===0 && s.kind==="worm" && !s.closed && !s.completed);
+  if(!open.length) return false; const t=pick(open); t.completed=true;
+  const n=t.pts.length, ex=t.pts[n-3], ey=t.pts[n-2], sx=t.pts[0], sy=t.pts[1];
+  const bow=(Math.random()<0.5?1:-1), out=[]; const steps=12;
+  for(let i=0;i<=steps;i++){ const u=i/steps; out.push(lerp(ex,sx,u)+Math.sin(u*Math.PI)*46*bow, lerp(ey,sy,u)-Math.sin(u*Math.PI)*34, 5); }
+  const s=makeStroke(resample(new Float32Array(out),3), t.color, 1);
+  s.growT=0; s.settled=false; s.alive=false; s.pending=true;
+  strokes.push(s); L.undrew++; sesUndrew++; saveLedger(); return true;
+}
 
 /* Stage 3.5 — a sweet unprompted mark: a heart above a creature */
 let sweetDone=0;
@@ -442,7 +475,7 @@ function doMerge(){ if(ending)return; ending="merge"; director.mergeT=0; if(dire
   for(const s of alive){ if(s.soul){ s.soul.state="merge"; s.soul.slot=i/n*TAU; i++; } }
   view.ts=RM?0.7:0.5; view.tox=W*0.5-(W*0.5)*view.ts; view.toy=H*0.5-(H*0.5)*view.ts;  // re-approach for the tableau
 }
-function doErase(waved){ if(ending)return; ending="erase"; foods.length=0;
+function doErase(waved){ if(ending)return; ending="erase"; foods.length=0; book.length=0;
   // real, consensual: clear EVERYTHING the game kept — snapshot keys first (removing while iterating skips keys)
   wiped=true;
   try{ const keys=Object.keys(localStorage).filter(k=>k.indexOf("doodle.")===0 && k!=="doodle.scar"); for(const k of keys) localStorage.removeItem(k); }catch(e){}
@@ -566,7 +599,7 @@ function step(dt){
   // finale ending detection
   finaleDetect(dt);
   if(fxMsgTimer>0)fxMsgTimer-=dt;
-  if(performance.now()-lastSave>2000){ lastSave=performance.now(); saveLedger(); }
+  if(performance.now()-lastSave>2000){ lastSave=performance.now(); saveLedger(); saveBook(); }
 }
 
 /* bait: on load, one wandering blob demonstrates aliveness with no text */
@@ -733,8 +766,10 @@ cv.addEventListener("pointerdown",e=>{ unlock(); cv.setPointerCapture(e.pointerI
   if(p.y>H-64 && p.x<tray.eraser.x+40){ if(muteTimer)clearTimeout(muteTimer); muteTimer=setTimeout(toggleMute,600); }
   // tray hit?
   if(hitTray(p.x,p.y)){ return; }
-  // dog-ear undo
-  if(p.x>W-30 && p.y>H-30){ undoLast(); return; }
+  // dog-ear (bottom-right): drag to peel a fresh page, quick tap = undo (resolved on release)
+  if(p.x>W-32 && p.y>H-32 && stage<6){ corner={sx:p.x, sy:p.y, peel:0}; return; }
+  // flip-back dog-ear (bottom-left) appears once there are prior pages
+  if(page>0 && p.x<32 && p.y>H-32 && stage<6){ turnPage(-1); return; }
   if(tool==="eraser"){ eraseAt(p.x,p.y); return; }
   // grab a creature?
   const c=creatureAt(p.x,p.y);
@@ -744,6 +779,7 @@ cv.addEventListener("pointerdown",e=>{ unlock(); cv.setPointerCapture(e.pointerI
 addEventListener("pointermove",e=>{ const p=pos(e); pointer.x=p.x;pointer.y=p.y;pointer.pressure=e.pressure;
   if(muteTimer){ clearTimeout(muteTimer); muteTimer=null; }   // moving cancels the mute long-press
   if(!pointer.down) return;
+  if(corner){ corner.peel=clamp(((corner.sx-p.x)+(corner.sy-p.y))/(Math.min(W,H)*0.4),0,1); return; }  // peeling the page corner
   if(stage>=6 && director.offered) return; // finale: no drawing; your cursor is just a mark now
   if(grabbed){ const nx=p.x-grabbed.grabX, ny=p.y-grabbed.grabY; grabbed.vx=(nx-grabbed.x)*0.6; grabbed.vy=(ny-grabbed.y)*0.6; grabbed.x=nx; grabbed.y=ny; return; }
   if(tool==="eraser" && pointer.down){ eraseAt(p.x,p.y); return; }
@@ -751,6 +787,10 @@ addEventListener("pointermove",e=>{ const p=pos(e); pointer.x=p.x;pointer.y=p.y;
 });
 addEventListener("pointerup",e=>{ pointer.down=false; director.consent=false; director.holdT=0; director.holdMoved=0;
   if(muteTimer){ clearTimeout(muteTimer); muteTimer=null; }
+  if(corner){ const travel=dist(corner.sx,corner.sy,pointer.x,pointer.y);
+    if(travel<16) undoLast();                    // quick tap on the corner = undo
+    else if(corner.peel>=0.5) turnPage(1);        // dragged the corner enough = turn to a fresh page
+    corner=null; return; }
   if(grabbed){ const sp=Math.hypot(grabbed.vx,grabbed.vy);
     if(sp>10){ if(grabbed.soul){grabbed.soul.state="idle"; reactAt(grabbed,"ex"); grabbed.dizzy=1;} }        // flung -> dizzy
     else if(grabbed.soul){ grabbed.sq=0.5; grabbed.vy=-2.6; grabbed.soul.mood=0.8; grabbed.soul.state="idle"; reactAt(grabbed,pick(["spark","note","heart"])); sPoke(); } // tapped -> startled giggle
@@ -787,13 +827,13 @@ function loop(now){ let dt=(now-last)/1000; last=now; dt=Math.min(dt,0.05);
   if(running){ step(dt); render(); }
   requestAnimationFrame(loop);
 }
-document.addEventListener("visibilitychange",()=>{ running=!document.hidden; last=performance.now(); if(!document.hidden) saveLedger(); });
+document.addEventListener("visibilitychange",()=>{ running=!document.hidden; last=performance.now(); if(document.hidden){ saveLedger(); saveBook(); } });
 
 /* ---- boot ---------------------------------------------------------- */
 if(FAST){ window.__dbg=()=>({n:strokes.length, alive:strokes.filter(s=>s.alive).length, pending:strokes.filter(s=>s.pending).length, foods:foods.length, nuzzling:strokes.filter(s=>s.soul&&s.soul.state==="nuzzle").length, seeking:strokes.filter(s=>s.soul&&s.soul.state==="seek").length, babies:strokes.filter(s=>s.baby).length, fed:strokes.reduce((a,s)=>a+(s.soul?s.soul.fed:0),0), content:+(strokes.filter(s=>s.soul).reduce((a,s)=>a+s.soul.content,0)/Math.max(1,strokes.filter(s=>s.soul).length)).toFixed(2), gen:L.gen||0, loved:L.loved||0, muted, audio:!!AC,
-  nuzT:(()=>{const s=strokes.find(x=>x.soul&&x.soul.state==="nuzzle"&&x.soul.partner&&x.id<x.soul.partner.id);if(!s)return -1;const p=s.soul.partner;return {t:+s.soul.nuzT.toFixed(2),d:Math.round(dist(s.x+s.bb.w/2,s.y+s.bb.h/2,p.x+p.bb.w/2,p.y+p.bb.h/2))};})(), stage, drawn:L.drawn, undrew:L.undrew, erasedAlive:L.erasedAlive, tool, color, ending, view:+view.s.toFixed(2), offered:director.offered, consent:director.consent, ex:director.finale?Math.round(director.finale.eraser.x):0, ey:director.finale?Math.round(director.finale.eraser.y):0}); }
+  nuzT:(()=>{const s=strokes.find(x=>x.soul&&x.soul.state==="nuzzle"&&x.soul.partner&&x.id<x.soul.partner.id);if(!s)return -1;const p=s.soul.partner;return {t:+s.soul.nuzT.toFixed(2),d:Math.round(dist(s.x+s.bb.w/2,s.y+s.bb.h/2,p.x+p.bb.w/2,p.y+p.bb.h/2))};})(), stage, drawn:L.drawn, undrew:L.undrew, erasedAlive:L.erasedAlive, tool, color, ending, page, pages:book.length, view:+view.s.toFixed(2), offered:director.offered, consent:director.consent, ex:director.finale?Math.round(director.finale.eraser.x):0, ey:director.finale?Math.round(director.finale.eraser.y):0}); }
 if(FAST){ window.__feed=()=>{ strokes.filter(s=>s.alive&&s.soul).forEach(s=>{ s.soul.content=0.8; s.soul.hunger=0; s.soul.refractory=0; if(s.soul.state==="sleep")s.soul.state="idle"; }); }; }
-function boot(){ resize(); drawFavicon(); requestAnimationFrame(loop); saveLedger(); }
+function boot(){ resize(); loadBook(); drawFavicon(); requestAnimationFrame(loop); saveLedger(); saveBook(); }
 function drawFavicon(){ try{const c=document.createElement("canvas");c.width=c.height=32;const x=c.getContext("2d");
   x.fillStyle=css("--paper");x.fillRect(0,0,32,32); x.fillStyle=css("--ink"); x.beginPath();x.moveTo(8,26);x.lineTo(20,6);x.lineTo(26,10);x.closePath();x.fill();
   const l=document.createElement("link");l.rel="icon";l.href=c.toDataURL("image/png");document.head.appendChild(l);}catch(e){} }
